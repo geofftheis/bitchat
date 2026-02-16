@@ -30,10 +30,8 @@ struct RelayController {
         if isHandshake || isDirectedFragment || isDirectedEncrypted {
             // Always relay with no TTL cap for these types
             let newTTL = ttlCap &- 1
-            // Slight jitter to desynchronize without adding too much latency
-            // Tighter for faster multi-hop handshakes and directed DMs
-            let delayRange: ClosedRange<Int> = isHandshake ? 10...35 : 20...60
-            let delayMs = Int.random(in: delayRange)
+            // Half-Wit: zero relay jitter for real-time gaming — see BITCHAT_PATCHES.md Patch 6
+            let delayMs = 0
             return RelayDecision(shouldRelay: true, newTTL: newTTL, delayMs: delayMs)
         }
 
@@ -43,7 +41,7 @@ struct RelayController {
                 return RelayDecision(shouldRelay: false, newTTL: ttlLimit, delayMs: 0)
             }
             let newTTL = ttlLimit &- 1
-            let delayMs = Int.random(in: TransportConfig.bleFragmentRelayMinDelayMs...TransportConfig.bleFragmentRelayMaxDelayMs)
+            let delayMs = 0  // Half-Wit: zero relay jitter — see BITCHAT_PATCHES.md Patch 6
             return RelayDecision(shouldRelay: true, newTTL: newTTL, delayMs: delayMs)
         }
 
@@ -59,15 +57,8 @@ struct RelayController {
         }()
         let newTTL = ttlLimit &- 1
 
-        // Wider jitter window to allow duplicate suppression to win more often
-        // For sparse graphs (<=2), relay quickly to avoid cancellation races
-        let delayMs: Int
-        switch degree {
-        case 0...2: delayMs = Int.random(in: 10...40)
-        case 3...5: delayMs = Int.random(in: 60...150)
-        case 6...9: delayMs = Int.random(in: 80...180)
-        default:    delayMs = Int.random(in: 100...220)
-        }
+        // Half-Wit: zero relay jitter for real-time gaming — see BITCHAT_PATCHES.md Patch 6
+        let delayMs = 0
         return RelayDecision(shouldRelay: true, newTTL: newTTL, delayMs: delayMs)
     }
 }

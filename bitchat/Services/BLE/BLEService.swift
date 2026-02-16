@@ -219,7 +219,7 @@ final class BLEService: NSObject {
 
     // MARK: - Adaptive scanning duty-cycle
     private var scanDutyTimer: DispatchSourceTimer?
-    private var dutyEnabled: Bool = true
+    private var dutyEnabled: Bool = false  // Half-Wit: disable duty cycling for continuous scanning — see BITCHAT_PATCHES.md Patch 5
     private var dutyOnDuration: TimeInterval = TransportConfig.bleDutyOnDuration
     private var dutyOffDuration: TimeInterval = TransportConfig.bleDutyOffDuration
     private var dutyActive: Bool = false
