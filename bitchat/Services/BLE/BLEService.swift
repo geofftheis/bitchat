@@ -330,28 +330,12 @@ final class BLEService: NSObject {
     }
     
     private func restartGossipManager() {
-        // Stop existing
+        // Half-Wit Patch 8: GossipSync disabled — the app-level retry loops provide
+        // sufficient reliability, and gossip sync floods the BLE radio with thousands
+        // of sync packets that cause L2CAP congestion and game message drops.
         gossipSyncManager?.stop()
-        
-        let config = GossipSyncManager.Config(
-            seenCapacity: TransportConfig.syncSeenCapacity,
-            gcsMaxBytes: TransportConfig.syncGCSMaxBytes,
-            gcsTargetFpr: TransportConfig.syncGCSTargetFpr,
-            maxMessageAgeSeconds: TransportConfig.syncMaxMessageAgeSeconds,
-            maintenanceIntervalSeconds: TransportConfig.syncMaintenanceIntervalSeconds,
-            stalePeerCleanupIntervalSeconds: TransportConfig.syncStalePeerCleanupIntervalSeconds,
-            stalePeerTimeoutSeconds: TransportConfig.syncStalePeerTimeoutSeconds,
-            fragmentCapacity: TransportConfig.syncFragmentCapacity,
-            fileTransferCapacity: TransportConfig.syncFileTransferCapacity,
-            fragmentSyncIntervalSeconds: TransportConfig.syncFragmentIntervalSeconds,
-            fileTransferSyncIntervalSeconds: TransportConfig.syncFileTransferIntervalSeconds,
-            messageSyncIntervalSeconds: TransportConfig.syncMessageIntervalSeconds
-        )
-        
-        let manager = GossipSyncManager(myPeerID: myPeerID, config: config, requestSyncManager: requestSyncManager)
-        manager.delegate = self
-        manager.start()
-        gossipSyncManager = manager
+        gossipSyncManager = nil
+        SecureLogger.info("GossipSyncManager NOT started (Half-Wit Patch 8)", category: .session)
     }
 
     // No advertising policy to set; we never include Local Name in adverts.
