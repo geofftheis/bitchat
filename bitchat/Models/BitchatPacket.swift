@@ -91,7 +91,10 @@ struct BitchatPacket: Codable {
             route: route,
             isRSR: false // RSR flag is mutable and not part of the signature
         )
-        return BinaryProtocol.encode(unsignedPacket)
+        // Half-Wit Patch 7: Always sign over unpadded (canonical) bytes.
+        // Padding is presentation-layer; the signature must be independent of it
+        // so that cross-platform verification succeeds regardless of pad policy.
+        return BinaryProtocol.encode(unsignedPacket, padding: false)
     }
     
     static func from(_ data: Data) -> BitchatPacket? {
