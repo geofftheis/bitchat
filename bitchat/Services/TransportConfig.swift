@@ -5,7 +5,7 @@ import Foundation
 enum TransportConfig {
     // BLE / Protocol
     static let bleDefaultFragmentSize: Int = 469            // ~512 MTU minus protocol overhead
-    static let messageTTLDefault: UInt8 = 7                 // Default TTL for mesh flooding
+    static let messageTTLDefault: UInt8 = 1                 // Half-Wit Patch 7: TTL=1 disables relay forwarding (all 8 players are directly connected)
     static let bleMaxInFlightAssemblies: Int = 128          // Cap concurrent fragment assemblies
     static let bleHighDegreeThreshold: Int = 6              // For adaptive TTL/probabilistic relays
     static let bleMaxConcurrentTransfers: Int = 2           // Limit simultaneous large media sends

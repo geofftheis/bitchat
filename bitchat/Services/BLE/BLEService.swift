@@ -885,12 +885,10 @@ final class BLEService: NSObject {
 
     // MARK: - Broadcast helpers (single responsibility)
     private func padPolicy(for type: UInt8) -> Bool {
-        switch MessageType(rawValue: type) {
-        case .noiseEncrypted, .noiseHandshake:
-            return true
-        case .none, .announce, .message, .leave, .requestSync, .fragment, .fileTransfer:
-            return false
-        }
+        // Half-Wit Patch 7: Disable message padding for all packet types.
+        // Padding obscures message length for traffic analysis resistance,
+        // which is unnecessary for a local 8-player game.
+        return false
     }
 
     private func sendEncrypted(_ packet: BitchatPacket, data: Data, pad: Bool) {
