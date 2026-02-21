@@ -16,9 +16,9 @@ final class BLEService: NSObject {
     // MARK: - Constants
     
     #if DEBUG
-    static let serviceUUID = CBUUID(string: "F47B5E2D-4A9E-4C5A-9B3F-8E1D2C3A4B5A") // testnet
+    static let serviceUUID = CBUUID(string: "7A1F0E2D-5B9C-4D3A-8E2F-1C4D5A6B7E8E") // testnet
     #else
-    static let serviceUUID = CBUUID(string: "F47B5E2D-4A9E-4C5A-9B3F-8E1D2C3A4B5C") // mainnet
+    static let serviceUUID = CBUUID(string: "7A1F0E2D-5B9C-4D3A-8E2F-1C4D5A6B7E8F") // mainnet
     #endif
     static let characteristicUUID = CBUUID(string: "A1B2C3D4-E5F6-4A5B-8C9D-0E1F2A3B4C5D")
     private static let centralRestorationID = "chat.bitchat.ble.central"
