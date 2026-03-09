@@ -14,12 +14,16 @@ import UIKit
 final class BLEService: NSObject {
     
     // MARK: - Constants
-    
+
     #if DEBUG
-    static let serviceUUID = CBUUID(string: "7A1F0E2D-5B9C-4D3A-8E2F-1C4D5A6B7E8E") // testnet
+    static let defaultServiceUUID = CBUUID(string: "7A1F0E2D-5B9C-4D3A-8E2F-1C4D5A6B7E8E") // testnet
     #else
-    static let serviceUUID = CBUUID(string: "7A1F0E2D-5B9C-4D3A-8E2F-1C4D5A6B7E8F") // mainnet
+    static let defaultServiceUUID = CBUUID(string: "7A1F0E2D-5B9C-4D3A-8E2F-1C4D5A6B7E8F") // mainnet
     #endif
+
+    /// Per-instance service UUID — defaults to the shared Half-Wit UUID but can be
+    /// overridden at init time for per-game BLE isolation.
+    let serviceUUID: CBUUID
     static let characteristicUUID = CBUUID(string: "A1B2C3D4-E5F6-4A5B-8C9D-0E1F2A3B4C5D")
     private static let centralRestorationID = "chat.bitchat.ble.central"
     private static let peripheralRestorationID = "chat.bitchat.ble.peripheral"
@@ -249,10 +253,12 @@ final class BLEService: NSObject {
     // MARK: - Initialization
     
     init(
+        serviceUUID: CBUUID = BLEService.defaultServiceUUID,
         keychain: KeychainManagerProtocol,
         idBridge: NostrIdentityBridge,
         identityManager: SecureIdentityStateManagerProtocol
     ) {
+        self.serviceUUID = serviceUUID
         self.keychain = keychain
         self.idBridge = idBridge
         noiseService = NoiseEncryptionService(keychain: keychain)
@@ -493,7 +499,7 @@ final class BLEService: NSObject {
         // Start BLE services if not already running
         if centralManager?.state == .poweredOn {
             centralManager?.scanForPeripherals(
-                withServices: [BLEService.serviceUUID],
+                withServices: [serviceUUID],
                 options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
             )
         }
@@ -1687,7 +1693,7 @@ extension BLEService: CBCentralManagerDelegate {
         #endif
         
         central.scanForPeripherals(
-                withServices: [BLEService.serviceUUID],
+                withServices: [serviceUUID],
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: allowDuplicates]
         )
         
@@ -1857,7 +1863,7 @@ func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeriph
         SecureLogger.debug("✅ Connected: \(peripheral.name ?? "Unknown") [\(peripheralID)]", category: .session)
         
         // Discover services
-        peripheral.discoverServices([BLEService.serviceUUID])
+        peripheral.discoverServices([serviceUUID])
     }
     
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
@@ -2040,7 +2046,7 @@ extension BLEService: CBPeripheralDelegate {
             // Retry service discovery after a delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 guard peripheral.state == .connected else { return }
-                peripheral.discoverServices([BLEService.serviceUUID])
+                peripheral.discoverServices([serviceUUID])
             }
             return
         }
@@ -2050,7 +2056,7 @@ extension BLEService: CBPeripheralDelegate {
             return
         }
         
-        guard let service = services.first(where: { $0.uuid == BLEService.serviceUUID }) else {
+        guard let service = services.first(where: { $0.uuid == serviceUUID }) else {
             // Not a BitChat peer - disconnect
             centralManager?.cancelPeripheralConnection(peripheral)
             return
@@ -2243,7 +2249,7 @@ extension BLEService: CBPeripheralDelegate {
         SecureLogger.warning("⚠️ Services modified for \(peripheral.name ?? peripheral.identifier.uuidString)", category: .session)
         
         // Check if our service was invalidated (peer app quit)
-        let hasOurService = peripheral.services?.contains { $0.uuid == BLEService.serviceUUID } ?? false
+        let hasOurService = peripheral.services?.contains { $0.uuid == serviceUUID } ?? false
         
         if !hasOurService {
             // Service is gone - disconnect
@@ -2251,7 +2257,7 @@ extension BLEService: CBPeripheralDelegate {
             centralManager?.cancelPeripheralConnection(peripheral)
         } else {
             // Try to rediscover
-            peripheral.discoverServices([BLEService.serviceUUID])
+            peripheral.discoverServices([serviceUUID])
         }
     }
     
@@ -2291,7 +2297,7 @@ extension BLEService: CBPeripheralManagerDelegate {
             )
 
             // Create service
-            let service = CBMutableService(type: BLEService.serviceUUID, primary: true)
+            let service = CBMutableService(type: serviceUUID, primary: true)
             service.characteristics = [characteristic!]
 
             // Add service (advertising will start in didAdd delegate)
@@ -2352,7 +2358,7 @@ extension BLEService: CBPeripheralManagerDelegate {
 
         // Attempt to recover characteristic from restored services
         if characteristic == nil {
-            if let service = restoredServices.first(where: { $0.uuid == BLEService.serviceUUID }),
+            if let service = restoredServices.first(where: { $0.uuid == serviceUUID }),
                let restoredCharacteristic = service.characteristics?.first(where: { $0.uuid == BLEService.characteristicUUID }) as? CBMutableCharacteristic {
                 characteristic = restoredCharacteristic
             }
@@ -2667,7 +2673,7 @@ extension BLEService: CBPeripheralManagerDelegate {
 extension BLEService {
     private func buildAdvertisementData() -> [String: Any] {
         let data: [String: Any] = [
-            CBAdvertisementDataServiceUUIDsKey: [BLEService.serviceUUID]
+            CBAdvertisementDataServiceUUIDsKey: [serviceUUID]
         ]
         // No Local Name for privacy
         return data
