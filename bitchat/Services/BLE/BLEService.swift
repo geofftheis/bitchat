@@ -2046,7 +2046,7 @@ extension BLEService: CBPeripheralDelegate {
             // Retry service discovery after a delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 guard peripheral.state == .connected else { return }
-                peripheral.discoverServices([serviceUUID])
+                peripheral.discoverServices([self.serviceUUID])
             }
             return
         }
