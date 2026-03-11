@@ -576,6 +576,15 @@ final class BLEService: NSObject {
         for state in peripheralsToDisconnect {
             centralManager?.cancelPeripheralConnection(state.peripheral)
         }
+
+        // Patch 24: Release CoreBluetooth managers immediately so they can't
+        // receive callbacks or hold BLE resources after the BLEService is
+        // logically stopped. Without this, ARC may keep the old managers alive
+        // (via dispatch queues, delegate refs, etc.) while a new BLEService
+        // creates competing managers on the same radio.
+        peripheralManager?.removeAllServices()
+        centralManager = nil
+        peripheralManager = nil
     }
     
     func emergencyDisconnectAll() {
