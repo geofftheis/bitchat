@@ -25,8 +25,11 @@ final class BLEService: NSObject {
     /// overridden at init time for per-game BLE isolation.
     let serviceUUID: CBUUID
     static let characteristicUUID = CBUUID(string: "A1B2C3D4-E5F6-4A5B-8C9D-0E1F2A3B4C5D")
-    private static let centralRestorationID = "chat.bitchat.ble.central"
-    private static let peripheralRestorationID = "chat.bitchat.ble.peripheral"
+    // Patch 23: Include serviceUUID in restoration identifiers so that
+    // BLEService instances on different UUIDs (lobby vs per-game) don't
+    // cross-contaminate each other's CoreBluetooth state restoration.
+    private let centralRestorationID: String
+    private let peripheralRestorationID: String
     
     // Default per-fragment chunk size when link limits are unknown
     private let defaultFragmentSize = TransportConfig.bleDefaultFragmentSize
@@ -259,6 +262,9 @@ final class BLEService: NSObject {
         identityManager: SecureIdentityStateManagerProtocol
     ) {
         self.serviceUUID = serviceUUID
+        // Patch 23: derive restoration IDs from serviceUUID
+        self.centralRestorationID = "chat.bitchat.ble.central.\(serviceUUID.uuidString)"
+        self.peripheralRestorationID = "chat.bitchat.ble.peripheral.\(serviceUUID.uuidString)"
         self.keychain = keychain
         self.idBridge = idBridge
         noiseService = NoiseEncryptionService(keychain: keychain)
@@ -304,12 +310,12 @@ final class BLEService: NSObject {
         // This prevents app freezes during BLE operations
         #if os(iOS)
         let centralOptions: [String: Any] = [
-            CBCentralManagerOptionRestoreIdentifierKey: BLEService.centralRestorationID
+            CBCentralManagerOptionRestoreIdentifierKey: centralRestorationID
         ]
         centralManager = CBCentralManager(delegate: self, queue: bleQueue, options: centralOptions)
 
         let peripheralOptions: [String: Any] = [
-            CBPeripheralManagerOptionRestoreIdentifierKey: BLEService.peripheralRestorationID
+            CBPeripheralManagerOptionRestoreIdentifierKey: peripheralRestorationID
         ]
         peripheralManager = CBPeripheralManager(delegate: self, queue: bleQueue, options: peripheralOptions)
         #else
