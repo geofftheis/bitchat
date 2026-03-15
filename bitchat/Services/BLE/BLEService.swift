@@ -40,6 +40,10 @@ final class BLEService: NSObject {
     private let maxInFlightAssemblies = TransportConfig.bleMaxInFlightAssemblies // cap concurrent fragment assemblies
     private let highDegreeThreshold = TransportConfig.bleHighDegreeThreshold // for adaptive TTL/probabilistic relays
     
+    // Patch 27: Optional local name for game metadata in BLE advertisement.
+    // Encoded as "HW" + hex byte (e.g., "HW03" = unlocked, 3 players).
+    var gameLocalName: String? = nil
+
     // MARK: - Core State (5 Essential Collections)
     
     // 1. Consolidated Peripheral Tracking
@@ -2687,14 +2691,26 @@ extension BLEService: CBPeripheralManagerDelegate {
 
 extension BLEService {
     private func buildAdvertisementData() -> [String: Any] {
-        let data: [String: Any] = [
+        var data: [String: Any] = [
             CBAdvertisementDataServiceUUIDsKey: [serviceUUID]
         ]
-        // No Local Name for privacy
+        // Patch 27: Include game metadata as local name if set
+        if let name = gameLocalName {
+            data[CBAdvertisementDataLocalNameKey] = name
+        }
         return data
     }
-    
-    // No alias rotation or advertising restarts required.
+
+    /// Patch 27: Update game metadata and restart advertising to broadcast the new value.
+    /// Pass nil to clear metadata from the advertisement.
+    func updateGameMetadata(localName: String?) {
+        self.gameLocalName = localName
+        // Restart advertising with updated data
+        peripheralManager?.stopAdvertising()
+        if let pm = peripheralManager, pm.state == .poweredOn {
+            pm.startAdvertising(buildAdvertisementData())
+        }
+    }
 }
 
 // MARK: - Private Helpers
