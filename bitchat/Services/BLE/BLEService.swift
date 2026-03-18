@@ -232,8 +232,9 @@ final class BLEService: NSObject {
     private var scanDutyTimer: DispatchSourceTimer?
     private var dutyEnabled: Bool = false  // Half-Wit: disable duty cycling for continuous scanning — see BITCHAT_PATCHES.md Patch 5
 
-    // Patch 39: Allow disabling scanning for host devices to reduce BLE radio contention
-    var scanningEnabled: Bool = true
+    // Patch 39: Mesh-maintenance mode uses allowDuplicates=false for lower radio load.
+    // Host devices start in this mode from transport init; joiners switch to it after joining.
+    private(set) var meshMaintenanceMode: Bool = false
     private var dutyOnDuration: TimeInterval = TransportConfig.bleDutyOnDuration
     private var dutyOffDuration: TimeInterval = TransportConfig.bleDutyOffDuration
     private var dutyActive: Bool = false
@@ -510,14 +511,8 @@ final class BLEService: NSObject {
     
     func startServices() {
         // Start BLE services if not already running
-        // Patch 39: Skip scanning if disabled (host mode)
-        if scanningEnabled, centralManager?.state == .poweredOn {
-            centralManager?.scanForPeripherals(
-                withServices: [serviceUUID],
-                options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
-            )
-        } else if !scanningEnabled {
-            SecureLogger.info("Scanning disabled (host mode) — skipping BLE scan", category: .session)
+        if centralManager?.state == .poweredOn {
+            startScanning()
         }
         
         // Send initial announce after services are ready
@@ -1705,31 +1700,44 @@ extension BLEService: CBCentralManagerDelegate {
     }
     
     private func startScanning() {
-        // Patch 39: Don't start scanning if disabled (host mode)
-        guard scanningEnabled else { return }
         guard let central = centralManager,
               central.state == .poweredOn,
               !central.isScanning else { return }
-        
-        // Use allow duplicates = true for faster discovery in foreground
-        // This gives us discovery events immediately instead of coalesced
-        #if os(iOS)
-        let allowDuplicates = isAppActive  // Use our tracked state (thread-safe)
-        #else
-        let allowDuplicates = true  // macOS doesn't have background restrictions
-        #endif
-        
+
+        // Patch 39: In mesh-maintenance mode, always use allowDuplicates=false
+        // to reduce radio load while maintaining mesh connectivity.
+        // In aggressive mode (joiners connecting), use allowDuplicates=true in foreground.
+        let allowDuplicates: Bool
+        if meshMaintenanceMode {
+            allowDuplicates = false
+        } else {
+            #if os(iOS)
+            allowDuplicates = isAppActive  // Use our tracked state (thread-safe)
+            #else
+            allowDuplicates = true  // macOS doesn't have background restrictions
+            #endif
+        }
+
         central.scanForPeripherals(
                 withServices: [serviceUUID],
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: allowDuplicates]
         )
-        
-        // Started BLE scanning
+
+        // Started BLE scanning (meshMaintenance=\(meshMaintenanceMode))
     }
 
-    /// Patch 39: Stop BLE scanning (e.g. after joiner connects to game).
+    /// Patch 39: Switch to mesh-maintenance scan mode and restart scanning.
+    /// Uses allowDuplicates=false to keep the mesh healthy with lower radio load.
+    func switchToMeshMaintenanceMode() {
+        meshMaintenanceMode = true
+        guard let central = centralManager, central.state == .poweredOn else { return }
+        central.stopScan()
+        SecureLogger.info("Switching to mesh-maintenance scan mode", category: .session)
+        startScanning()
+    }
+
+    /// Patch 39: Stop BLE scanning (e.g. when abandoning a join attempt).
     func stopScanning() {
-        scanningEnabled = false
         centralManager?.stopScan()
         SecureLogger.info("BLE scanning stopped via stopScanning()", category: .session)
     }
