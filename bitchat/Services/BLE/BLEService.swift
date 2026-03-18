@@ -231,6 +231,9 @@ final class BLEService: NSObject {
     // MARK: - Adaptive scanning duty-cycle
     private var scanDutyTimer: DispatchSourceTimer?
     private var dutyEnabled: Bool = false  // Half-Wit: disable duty cycling for continuous scanning — see BITCHAT_PATCHES.md Patch 5
+
+    // Patch 39: Allow disabling scanning for host devices to reduce BLE radio contention
+    var scanningEnabled: Bool = true
     private var dutyOnDuration: TimeInterval = TransportConfig.bleDutyOnDuration
     private var dutyOffDuration: TimeInterval = TransportConfig.bleDutyOffDuration
     private var dutyActive: Bool = false
@@ -507,11 +510,14 @@ final class BLEService: NSObject {
     
     func startServices() {
         // Start BLE services if not already running
-        if centralManager?.state == .poweredOn {
+        // Patch 39: Skip scanning if disabled (host mode)
+        if scanningEnabled, centralManager?.state == .poweredOn {
             centralManager?.scanForPeripherals(
                 withServices: [serviceUUID],
                 options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
             )
+        } else if !scanningEnabled {
+            SecureLogger.info("Scanning disabled (host mode) — skipping BLE scan", category: .session)
         }
         
         // Send initial announce after services are ready
@@ -1699,6 +1705,8 @@ extension BLEService: CBCentralManagerDelegate {
     }
     
     private func startScanning() {
+        // Patch 39: Don't start scanning if disabled (host mode)
+        guard scanningEnabled else { return }
         guard let central = centralManager,
               central.state == .poweredOn,
               !central.isScanning else { return }
@@ -1718,7 +1726,14 @@ extension BLEService: CBCentralManagerDelegate {
         
         // Started BLE scanning
     }
-    
+
+    /// Patch 39: Stop BLE scanning (e.g. after joiner connects to game).
+    func stopScanning() {
+        scanningEnabled = false
+        centralManager?.stopScan()
+        SecureLogger.info("BLE scanning stopped via stopScanning()", category: .session)
+    }
+
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi RSSI: NSNumber) {
         let peripheralID = peripheral.identifier.uuidString
         let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? (peripheralID.prefix(6) + "…")
