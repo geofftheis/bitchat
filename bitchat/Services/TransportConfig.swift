@@ -4,7 +4,12 @@ import Foundation
 /// Keep values aligned with existing behavior when replacing magic numbers.
 enum TransportConfig {
     // BLE / Protocol
-    static let bleDefaultFragmentSize: Int = 469            // ~512 MTU minus protocol overhead
+    // Half-Wit Patch 40: Reduced from 469 to 400.
+    // BLE GATT notifications are limited to MTU-3 bytes (514 with MTU 517).
+    // Each fragment is wrapped in a BitchatPacket with ~94 bytes of protocol
+    // overhead. The old value produced ~561-byte fragments that exceeded the
+    // 514-byte notification limit on Android server→client connections.
+    static let bleDefaultFragmentSize: Int = 400
     static let messageTTLDefault: UInt8 = 1                 // Half-Wit Patch 7: TTL=1 disables relay forwarding (all 8 players are directly connected)
     static let bleMaxInFlightAssemblies: Int = 128          // Cap concurrent fragment assemblies
     static let bleHighDegreeThreshold: Int = 6              // For adaptive TTL/probabilistic relays
