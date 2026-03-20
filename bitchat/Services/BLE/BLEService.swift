@@ -2150,10 +2150,11 @@ extension BLEService: CBPeripheralDelegate {
             peripherals[peripheralID] = state
         }
         
-        // Subscribe for notifications
-        if characteristic.properties.contains(.notify) {
+        // Patch 40: Subscribe for indications (confirmed delivery) or notifications.
+        // Indications are preferred; fall back to notifications for compatibility.
+        if characteristic.properties.contains(.indicate) || characteristic.properties.contains(.notify) {
             peripheral.setNotifyValue(true, for: characteristic)
-            SecureLogger.debug("🔔 Subscribed to notifications from \(peripheral.name ?? "Unknown")", category: .session)
+            SecureLogger.debug("🔔 Subscribed to indications from \(peripheral.name ?? "Unknown")", category: .session)
             
             // Send announce after subscription is confirmed (force send for new connection)
             messageQueue.asyncAfter(deadline: .now() + TransportConfig.blePostSubscribeAnnounceDelaySeconds) { [weak self] in
@@ -2338,10 +2339,12 @@ extension BLEService: CBPeripheralManagerDelegate {
             // Remove all services first to ensure clean state
             peripheral.removeAllServices()
 
-            // Create characteristic
+            // Patch 40: Create characteristic with indication support (confirmed delivery)
+            // instead of unconfirmed notifications. CoreBluetooth automatically handles
+            // the ATT-level acknowledgment handshake for indications.
             characteristic = CBMutableCharacteristic(
                 type: BLEService.characteristicUUID,
-                properties: [.notify, .write, .writeWithoutResponse, .read],
+                properties: [.indicate, .write, .writeWithoutResponse, .read],
                 value: nil,
                 permissions: [.readable, .writeable]
             )
