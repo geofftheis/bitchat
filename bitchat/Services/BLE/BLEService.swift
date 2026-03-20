@@ -213,7 +213,12 @@ final class BLEService: NSObject {
     private var maintenanceCounter = 0  // Track maintenance cycles
 
     // MARK: - Connection budget & scheduling (central role)
-    private let maxCentralLinks = TransportConfig.bleMaxCentralLinks
+    // Patch 40: Changed from let to var so app layer can set role-aware limits.
+    var maxCentralLinks = TransportConfig.bleMaxCentralLinks
+
+    // Patch 40: Host mode — disables scanning and outbound client connections.
+    // Host only accepts inbound connections via the GATT peripheral (server).
+    var hostMode: Bool = false
     private let connectRateLimitInterval: TimeInterval = TransportConfig.bleConnectRateLimitInterval
     private var lastGlobalConnectAttempt: Date = .distantPast
     private struct ConnectionCandidate {
@@ -1700,6 +1705,9 @@ extension BLEService: CBCentralManagerDelegate {
     }
     
     private func startScanning() {
+        // Patch 40: Host mode never scans — host only accepts inbound connections.
+        guard !hostMode else { return }
+
         guard let central = centralManager,
               central.state == .poweredOn,
               !central.isScanning else { return }
