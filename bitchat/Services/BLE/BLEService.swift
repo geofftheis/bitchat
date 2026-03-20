@@ -219,6 +219,11 @@ final class BLEService: NSObject {
     // Patch 40: Host mode — disables scanning and outbound client connections.
     // Host only accepts inbound connections via the GATT peripheral (server).
     var hostMode: Bool = false
+
+    // Patch 41: Reserved slot — if set, one central link slot is reserved for
+    // a peer whose peerID starts with this prefix. Non-matching peers can only
+    // fill (maxCentralLinks - 1) slots until the reserved peer is connected.
+    var reservedPeerPrefix: String = ""
     private let connectRateLimitInterval: TimeInterval = TransportConfig.bleConnectRateLimitInterval
     private var lastGlobalConnectAttempt: Date = .distantPast
     private struct ConnectionCandidate {
@@ -1774,8 +1779,17 @@ extension BLEService: CBCentralManagerDelegate {
         }
         
         // Budget: limit simultaneous central links (connected + connecting)
+        // Patch 41: Reserve one slot for the host peer if reservedPeerPrefix is set.
         let currentCentralLinks = peripherals.values.filter { $0.isConnected || $0.isConnecting }.count
-        if currentCentralLinks >= maxCentralLinks {
+        let effectiveMaxCentralLinks: Int = {
+            guard !reservedPeerPrefix.isEmpty, maxCentralLinks > 1 else { return maxCentralLinks }
+            let hostAlreadyConnected = peripherals.values.contains { state in
+                guard let pid = state.peerID else { return false }
+                return pid.id.hasPrefix(reservedPeerPrefix)
+            }
+            return hostAlreadyConnected ? maxCentralLinks : maxCentralLinks - 1
+        }()
+        if currentCentralLinks >= effectiveMaxCentralLinks {
             // Enqueue as candidate; we'll attempt later as slots open
             connectionCandidates.append(ConnectionCandidate(peripheral: peripheral, rssi: rssiValue, name: String(advertisedName), isConnectable: isConnectable, discoveredAt: Date()))
             // Keep candidate list tidy: prefer stronger RSSI, then recency; cap list
