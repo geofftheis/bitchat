@@ -40,8 +40,8 @@ final class BLEService: NSObject {
     private let maxInFlightAssemblies = TransportConfig.bleMaxInFlightAssemblies // cap concurrent fragment assemblies
     private let highDegreeThreshold = TransportConfig.bleHighDegreeThreshold // for adaptive TTL/probabilistic relays
     
-    // Patch 27: Optional local name for game metadata in BLE advertisement.
-    // Encoded as "HW" + hex byte (e.g., "HW03" = unlocked, 3 players).
+    // Patch 27/41: Optional local name for game metadata in BLE advertisement.
+    // Encoded as "H" + 2 hex metadata + 8 hex peerID prefix (e.g., "H03a1b2c3d4").
     var gameLocalName: String? = nil
 
     // MARK: - Core State (5 Essential Collections)
