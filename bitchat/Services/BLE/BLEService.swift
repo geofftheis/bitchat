@@ -2745,7 +2745,7 @@ extension BLEService: CBPeripheralManagerDelegate {
                             SecureLogger.info("Patch 43: Dropping duplicate server connection to peer \(claimedSenderID) via central \(centralUUID) (already connected as client via \(existingPeripheralUUID))", category: .session)
                             subscribedCentrals.removeAll { $0.identifier.uuidString == centralUUID }
                             centralToPeerID.removeValue(forKey: centralUUID)
-                            break
+                            continue
                         }
                         centralToPeerID[centralUUID] = claimedSenderID
                         refreshLocalTopology()
