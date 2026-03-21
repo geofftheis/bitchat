@@ -2164,18 +2164,12 @@ extension BLEService: CBPeripheralDelegate {
             peripherals[peripheralID] = state
         }
         
-        // Patch 40: Subscribe for indications (confirmed delivery) or notifications.
-        // Indications are preferred; fall back to notifications for compatibility.
+        // Patch 40c: Subscribe for indications (confirmed delivery) or notifications.
+        // The announce/flush is deferred to didUpdateNotificationStateFor callback
+        // so we only declare the connection ready after confirmed subscription.
         if characteristic.properties.contains(.indicate) || characteristic.properties.contains(.notify) {
             peripheral.setNotifyValue(true, for: characteristic)
-            SecureLogger.debug("🔔 Subscribed to indications from \(peripheral.name ?? "Unknown")", category: .session)
-            
-            // Send announce after subscription is confirmed (force send for new connection)
-            messageQueue.asyncAfter(deadline: .now() + TransportConfig.blePostSubscribeAnnounceDelaySeconds) { [weak self] in
-                self?.sendAnnounce(forceSend: true)
-                // Try flushing any spooled directed packets now that we have a link
-                self?.flushDirectedSpool()
-            }
+            SecureLogger.debug("🔔 Requesting indication subscription from \(peripheral.name ?? "Unknown")", category: .session)
         } else {
             SecureLogger.warning("⚠️ Characteristic does not support notifications", category: .session)
         }
@@ -2326,16 +2320,19 @@ extension BLEService: CBPeripheralDelegate {
         }
     }
     
+    // Patch 40c: Confirm indication subscription before declaring connection ready.
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
         if let error = error {
-            SecureLogger.error("❌ Error updating notification state: \(error.localizedDescription)", category: .session)
+            SecureLogger.error("❌ Indication subscription failed for \(peripheral.name ?? "Unknown"): \(error.localizedDescription) — retrying", category: .session)
+            // Retry once — if it fails again CoreBluetooth will call back with another error
+            peripheral.setNotifyValue(true, for: characteristic)
         } else {
             SecureLogger.debug("🔔 Notification state updated for \(peripheral.name ?? peripheral.identifier.uuidString): \(characteristic.isNotifying ? "ON" : "OFF")", category: .session)
-            
-            // If notifications are now on, send an announce to ensure this peer knows about us
+
+            // Connection is now fully ready — announce and flush spooled messages
             if characteristic.isNotifying {
-                // Sending announce after subscription
                 self.sendAnnounce(forceSend: true)
+                self.flushDirectedSpool()
             }
         }
     }
