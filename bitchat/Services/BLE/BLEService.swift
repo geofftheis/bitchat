@@ -1085,16 +1085,18 @@ final class BLEService: NSObject {
                 writeOrEnqueue(data, to: s.peripheral, characteristic: ch, priority: outboundPriority)
             }
         }
-        // Notify selected subscribed centrals
+        // Patch 45: Notify each subscribed central INDIVIDUALLY instead of as a batch.
+        // Apple's updateValue returns false if the Tx queue is full, and when called
+        // with multiple centrals, ALL centrals miss the notification even if only one
+        // is congested. By sending individually, a slow central can't block delivery
+        // to healthy centrals — critical for host stability with 2+ connected players.
         if let ch = characteristic {
             let targets = subscribedCentrals.filter { selectedCentralIDs.contains($0.identifier.uuidString) }
-            if !targets.isEmpty {
-                let success = peripheralManager?.updateValue(data, for: ch, onSubscribedCentrals: targets) ?? false
+            let context = packet.type == MessageType.fragment.rawValue ? "fragment" : "broadcast"
+            for target in targets {
+                let success = peripheralManager?.updateValue(data, for: ch, onSubscribedCentrals: [target]) ?? false
                 if !success {
-                    // Notification queue full - queue for retry to prevent silent packet loss
-                    // This is critical for fragment delivery reliability
-                    let context = packet.type == MessageType.fragment.rawValue ? "fragment" : "broadcast"
-                    enqueuePendingNotification(data: data, centrals: targets, context: context)
+                    enqueuePendingNotification(data: data, centrals: [target], context: context)
                 }
             }
         }
