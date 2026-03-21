@@ -2037,8 +2037,8 @@ extension BLEService {
             let rec = -Int(Date().timeIntervalSince(c.discoveredAt) * 10)
             // Patch 43: Huge bonus for the reserved (host) peer
             let reservedBonus: Int = {
-                guard !reservedPeerPrefix.isEmpty, let name = c.name, name.count == 11, name.hasPrefix("H") else { return 0 }
-                let prefix = String(name.dropFirst(3)).lowercased()
+                guard !reservedPeerPrefix.isEmpty, c.name.count == 11, c.name.hasPrefix("H") else { return 0 }
+                let prefix = String(c.name.dropFirst(3)).lowercased()
                 return prefix == reservedPeerPrefix ? 5000 : 0
             }()
             return base + rec - penalty - timeoutBias + reservedBonus
@@ -2050,8 +2050,8 @@ extension BLEService {
         // If candidate IS the reserved peer, allow full budget; otherwise use reserved-slot-aware limit.
         let current = peripherals.values.filter { $0.isConnected || $0.isConnecting }.count
         let candidateIsReserved: Bool = {
-            guard !reservedPeerPrefix.isEmpty, let name = candidate.name, name.count == 11, name.hasPrefix("H") else { return false }
-            return String(name.dropFirst(3)).lowercased() == reservedPeerPrefix
+            guard !reservedPeerPrefix.isEmpty, candidate.name.count == 11, candidate.name.hasPrefix("H") else { return false }
+            return String(candidate.name.dropFirst(3)).lowercased() == reservedPeerPrefix
         }()
         let budget: Int = {
             guard !reservedPeerPrefix.isEmpty, maxCentralLinks > 1 else { return maxCentralLinks }
