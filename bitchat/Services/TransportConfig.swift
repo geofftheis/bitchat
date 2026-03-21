@@ -103,10 +103,13 @@ enum TransportConfig {
     static let bleThreadSleepWriteShortDelaySeconds: TimeInterval = 0.05
     static let bleExpectedWritePerFragmentMs: Int = 20
     static let bleExpectedWriteMaxMs: Int = 5000
-    // Fragment pacing: Conservative spacing to prevent BLE buffer overflow
-    // Aggressive pacing causes packet loss; needs 25-30ms between fragments for reliable delivery
-    static let bleFragmentSpacingMs: Int = 30
-    static let bleFragmentSpacingDirectedMs: Int = 25
+    // Patch 42: Fragment pacing increased for reliable delivery with BLE indications.
+    // With indications (confirm=true, Patch 40b), the receiver must acknowledge each
+    // packet before the next can be sent. The ack round-trip takes 30-75ms depending
+    // on the BLE connection interval. 100ms provides margin for slow devices.
+    // iOS also has enqueuePendingNotification retry as a safety net.
+    static let bleFragmentSpacingMs: Int = 100
+    static let bleFragmentSpacingDirectedMs: Int = 80
     static let bleAnnounceIntervalSeconds: TimeInterval = 4.0
     static let bleDutyOnDurationDense: TimeInterval = 3.0
     static let bleDutyOffDurationDense: TimeInterval = 15.0
