@@ -10,7 +10,7 @@ enum TransportConfig {
     // overhead. The old value produced ~561-byte fragments that exceeded the
     // 514-byte notification limit on Android server→client connections.
     static let bleDefaultFragmentSize: Int = 400
-    static let messageTTLDefault: UInt8 = 1                 // Half-Wit Patch 7: TTL=1 disables relay forwarding (all 8 players are directly connected)
+    static let messageTTLDefault: UInt8 = 2                 // Half-Wit Patch 43: TTL=2 allows one relay hop for join reliability (was TTL=1 in Patch 7)
     static let bleMaxInFlightAssemblies: Int = 128          // Cap concurrent fragment assemblies
     static let bleHighDegreeThreshold: Int = 6              // For adaptive TTL/probabilistic relays
     static let bleMaxConcurrentTransfers: Int = 2           // Limit simultaneous large media sends

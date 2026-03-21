@@ -1778,11 +1778,23 @@ extension BLEService: CBCentralManagerDelegate {
             return
         }
         
+        // Patch 43: Extract peerID prefix from local name for iOS host recognition.
+        // iOS hosts advertise "H" + 2-hex metadata + 8-hex peerID prefix (11 chars).
+        let advertisedPeerPrefix: String? = {
+            let name = String(advertisedName)
+            guard name.count == 11, name.hasPrefix("H") else { return nil }
+            return String(name.dropFirst(3)).lowercased()
+        }()
+
         // Budget: limit simultaneous central links (connected + connecting)
         // Patch 41: Reserve one slot for the host peer if reservedPeerPrefix is set.
+        // Patch 43: Also recognize reserved peer from advertised local name.
         let currentCentralLinks = peripherals.values.filter { $0.isConnected || $0.isConnecting }.count
+        let isReservedPeer = !reservedPeerPrefix.isEmpty && advertisedPeerPrefix != nil && advertisedPeerPrefix == reservedPeerPrefix
         let effectiveMaxCentralLinks: Int = {
             guard !reservedPeerPrefix.isEmpty, maxCentralLinks > 1 else { return maxCentralLinks }
+            // If this peripheral IS the reserved peer, give it the full budget
+            if isReservedPeer { return maxCentralLinks }
             let hostAlreadyConnected = peripherals.values.contains { state in
                 guard let pid = state.peerID else { return false }
                 return pid.id.hasPrefix(reservedPeerPrefix)
@@ -2004,9 +2016,6 @@ func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeriph
 extension BLEService {
     private func tryConnectFromQueue() {
         guard let central = centralManager, central.state == .poweredOn else { return }
-        // Check budget and rate limit
-        let current = peripherals.values.filter { $0.isConnected || $0.isConnecting }.count
-        guard current < maxCentralLinks else { return }
         let delta = Date().timeIntervalSince(lastGlobalConnectAttempt)
         guard delta >= connectRateLimitInterval else {
             let delay = connectRateLimitInterval - delta + 0.05
@@ -2015,6 +2024,7 @@ extension BLEService {
         }
         // Pull best candidate by composite score
         guard !connectionCandidates.isEmpty else { return }
+        // Patch 43: Boost reserved-peer candidates so the host is tried first.
         // compute score: connectable> RSSI > recency, with backoff penalty
         func score(_ c: ConnectionCandidate) -> Int {
             let uuid = c.peripheral.identifier.uuidString
@@ -2025,10 +2035,38 @@ extension BLEService {
             let timeoutBias = (timeoutRecent != nil && Date().timeIntervalSince(timeoutRecent!) < 60) ? 10 : 0
             let base = (c.isConnectable ? 1000 : 0) + (c.rssi + 100) * 2
             let rec = -Int(Date().timeIntervalSince(c.discoveredAt) * 10)
-            return base + rec - penalty - timeoutBias
+            // Patch 43: Huge bonus for the reserved (host) peer
+            let reservedBonus: Int = {
+                guard !reservedPeerPrefix.isEmpty, let name = c.name, name.count == 11, name.hasPrefix("H") else { return 0 }
+                let prefix = String(name.dropFirst(3)).lowercased()
+                return prefix == reservedPeerPrefix ? 5000 : 0
+            }()
+            return base + rec - penalty - timeoutBias + reservedBonus
         }
         connectionCandidates.sort { score($0) > score($1) }
         let candidate = connectionCandidates.removeFirst()
+
+        // Patch 43: Reserved-peer-aware budget check.
+        // If candidate IS the reserved peer, allow full budget; otherwise use reserved-slot-aware limit.
+        let current = peripherals.values.filter { $0.isConnected || $0.isConnecting }.count
+        let candidateIsReserved: Bool = {
+            guard !reservedPeerPrefix.isEmpty, let name = candidate.name, name.count == 11, name.hasPrefix("H") else { return false }
+            return String(name.dropFirst(3)).lowercased() == reservedPeerPrefix
+        }()
+        let budget: Int = {
+            guard !reservedPeerPrefix.isEmpty, maxCentralLinks > 1 else { return maxCentralLinks }
+            if candidateIsReserved { return maxCentralLinks }
+            let hostConnected = peripherals.values.contains { state in
+                guard let pid = state.peerID else { return false }
+                return pid.id.hasPrefix(reservedPeerPrefix)
+            }
+            return hostConnected ? maxCentralLinks : maxCentralLinks - 1
+        }()
+        guard current < budget else {
+            // Re-enqueue if not the reserved peer
+            connectionCandidates.append(candidate)
+            return
+        }
         guard candidate.isConnectable else { return }
         let peripheral = candidate.peripheral
         let peripheralID = peripheral.identifier.uuidString
