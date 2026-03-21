@@ -2737,6 +2737,16 @@ extension BLEService: CBPeripheralManagerDelegate {
                 }
                 if packet.type == MessageType.announce.rawValue {
                     if packet.ttl == messageTTL {
+                        // Patch 43: Duplicate connection prevention.
+                        // If we already have a client (central) connection to this peer,
+                        // drop the inbound server connection to avoid wasting connection budget.
+                        if let existingPeripheralUUID = peerToPeripheralUUID[claimedSenderID],
+                           peripherals[existingPeripheralUUID]?.isConnected == true {
+                            SecureLogger.info("Patch 43: Dropping duplicate server connection to peer \(claimedSenderID) via central \(centralUUID) (already connected as client via \(existingPeripheralUUID))", category: .session)
+                            subscribedCentrals.removeAll { $0.identifier.uuidString == centralUUID }
+                            centralToPeerID.removeValue(forKey: centralUUID)
+                            break
+                        }
                         centralToPeerID[centralUUID] = claimedSenderID
                         refreshLocalTopology()
                     }
