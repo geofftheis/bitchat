@@ -105,11 +105,11 @@ enum TransportConfig {
     static let bleExpectedWriteMaxMs: Int = 5000
     // Patch 42: Fragment pacing increased for reliable delivery with BLE indications.
     // With indications (confirm=true, Patch 40b), the receiver must acknowledge each
-    // packet before the next can be sent. The ack round-trip takes 30-75ms depending
-    // on the BLE connection interval. 100ms provides margin for slow devices.
-    // iOS also has enqueuePendingNotification retry as a safety net.
-    static let bleFragmentSpacingMs: Int = 100
-    static let bleFragmentSpacingDirectedMs: Int = 80
+    // Revert Patch 42: With notifications (fire-and-forget), 30ms spacing is
+    // sufficient. The 100ms/80ms values were needed for indication ACK round-trips
+    // but those are no longer used (reverted to notifications).
+    static let bleFragmentSpacingMs: Int = 30
+    static let bleFragmentSpacingDirectedMs: Int = 25
     static let bleAnnounceIntervalSeconds: TimeInterval = 4.0
     static let bleDutyOnDurationDense: TimeInterval = 3.0
     static let bleDutyOffDurationDense: TimeInterval = 15.0

@@ -2415,7 +2415,7 @@ extension BLEService: CBPeripheralManagerDelegate {
             // the ATT-level acknowledgment handshake for indications.
             characteristic = CBMutableCharacteristic(
                 type: BLEService.characteristicUUID,
-                properties: [.indicate, .write, .writeWithoutResponse, .read],
+                properties: [.notify, .write, .writeWithoutResponse, .read],
                 value: nil,
                 permissions: [.readable, .writeable]
             )
