@@ -216,6 +216,14 @@ final class BLEService: NSObject {
     // Patch 40: Changed from let to var so app layer can set role-aware limits.
     var maxCentralLinks = TransportConfig.bleMaxCentralLinks
 
+    // Patch 50: Maximum inbound peripheral connections (subscribed centrals).
+    // Mirrors Android's maxServerConnections. Default is uncapped (Int.max).
+    var maxPeripheralLinks: Int = Int.max
+
+    // Patch 50: Maximum total connections (central + peripheral combined).
+    // When set below maxCentralLinks + maxPeripheralLinks, acts as a tighter overall cap.
+    var maxTotalConnections: Int = Int.max
+
     // Patch 40: Host mode — disables scanning and outbound client connections.
     // Host only accepts inbound connections via the GATT peripheral (server).
     var hostMode: Bool = false
@@ -1811,7 +1819,9 @@ extension BLEService: CBCentralManagerDelegate {
             }
             return hostAlreadyConnected ? maxCentralLinks : maxCentralLinks - 1
         }()
-        if currentCentralLinks >= effectiveMaxCentralLinks {
+        // Patch 50: Also check total connection limit (outbound + inbound)
+        let totalConnections = currentCentralLinks + subscribedCentrals.count
+        if currentCentralLinks >= effectiveMaxCentralLinks || totalConnections >= maxTotalConnections {
             // Enqueue as candidate; we'll attempt later as slots open
             connectionCandidates.append(ConnectionCandidate(peripheral: peripheral, rssi: rssiValue, name: String(advertisedName), isConnectable: isConnectable, discoveredAt: Date()))
             // Keep candidate list tidy: prefer stronger RSSI, then recency; cap list
@@ -2072,7 +2082,9 @@ extension BLEService {
             }
             return hostConnected ? maxCentralLinks : maxCentralLinks - 1
         }()
-        guard current < budget else {
+        // Patch 50: Also check total connection limit (outbound + inbound)
+        let totalForCandidate = current + subscribedCentrals.count
+        guard current < budget && totalForCandidate < maxTotalConnections else {
             // Re-enqueue if not the reserved peer
             connectionCandidates.append(candidate)
             return
@@ -2503,6 +2515,17 @@ extension BLEService: CBPeripheralManagerDelegate {
         let centralUUID = central.identifier.uuidString
         SecureLogger.debug("📥 Central subscribed: \(centralUUID)", category: .session)
         subscribedCentrals.append(central)
+
+        // Patch 50: Enforce inbound and total connection limits.
+        let currentOutbound = peripherals.values.filter { $0.isConnected || $0.isConnecting }.count
+        let currentInbound = subscribedCentrals.count
+        let overPeripheralLimit = currentInbound > maxPeripheralLinks
+        let overTotalLimit = (currentOutbound + currentInbound) > maxTotalConnections
+        if overPeripheralLimit || overTotalLimit {
+            SecureLogger.debug("Patch 50: Rejecting inbound central \(centralUUID) (inbound=\(currentInbound)/\(maxPeripheralLinks), total=\(currentOutbound + currentInbound)/\(maxTotalConnections))", category: .session)
+            subscribedCentrals.removeAll { $0.identifier == central.identifier }
+            return
+        }
 
         // BCH-01-004: Rate-limit subscription-triggered announces to prevent enumeration attacks
         let now = Date()
