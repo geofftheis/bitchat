@@ -532,6 +532,14 @@ final class BLEService: NSObject {
         }
     }
     
+    /// Patch 48: Stop BLE advertising only (keeps peripheral/central managers and
+    /// connections alive).  This makes the game invisible to scanners while still
+    /// allowing in-flight messages to be delivered over existing GATT connections.
+    func stopBleAdvertising() {
+        peripheralManager?.stopAdvertising()
+        SecureLogger.info("BLE advertising stopped (connections still active)", category: .session)
+    }
+
     func stopServices() {
         // Send leave message synchronously to ensure delivery
         let leavePacket = BitchatPacket(
