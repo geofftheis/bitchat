@@ -232,6 +232,10 @@ final class BLEService: NSObject {
     // a peer whose peerID starts with this prefix. Non-matching peers can only
     // fill (maxCentralLinks - 1) slots until the reserved peer is connected.
     var reservedPeerPrefix: String = ""
+
+    /// Patch 52: When false, this device will not relay packets for other peers.
+    var relayEnabled: Bool = true
+
     private let connectRateLimitInterval: TimeInterval = TransportConfig.bleConnectRateLimitInterval
     private var lastGlobalConnectAttempt: Date = .distantPast
     private struct ConnectionCandidate {
@@ -3928,6 +3932,9 @@ extension BLEService {
             return
         }
         
+        // Patch 52: Skip relay entirely when disabled (e.g. host device)
+        guard relayEnabled else { return }
+
         // Relay if TTL > 1 and we're not the original sender
         // Relay decision and scheduling (extracted via RelayController)
         do {
