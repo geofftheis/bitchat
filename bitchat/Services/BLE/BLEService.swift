@@ -593,6 +593,12 @@ final class BLEService: NSObject {
             pendingNotifications.removeAll()
         }
 
+        // Clear connection backoff state so penalties don't carry into the next game
+        bleQueue.sync {
+            recentConnectTimeouts.removeAll()
+        }
+        failureCounts.removeAll()
+
         // Stop timer
         maintenanceTimer?.cancel()
         maintenanceTimer = nil
@@ -1866,8 +1872,8 @@ extension BLEService: CBCentralManagerDelegate {
         }
         }
         
-        // Backoff if this peripheral recently timed out connection within the last 15 seconds
-        if let lastTimeout = recentConnectTimeouts[peripheralID], Date().timeIntervalSince(lastTimeout) < 15 {
+        // Backoff if this peripheral recently timed out connection within the last 8 seconds
+        if let lastTimeout = recentConnectTimeouts[peripheralID], Date().timeIntervalSince(lastTimeout) < 8 {
             return
         }
 
@@ -2052,7 +2058,7 @@ extension BLEService {
             let fails = failureCounts[uuid] ?? 0
             let penalty = min(20, (1 << min(4, fails))) // 1,2,4,8,16 cap 16-20
             let timeoutRecent = recentConnectTimeouts[uuid]
-            let timeoutBias = (timeoutRecent != nil && Date().timeIntervalSince(timeoutRecent!) < 60) ? 10 : 0
+            let timeoutBias = (timeoutRecent != nil && Date().timeIntervalSince(timeoutRecent!) < 30) ? 10 : 0
             let base = (c.isConnectable ? 1000 : 0) + (c.rssi + 100) * 2
             let rec = -Int(Date().timeIntervalSince(c.discoveredAt) * 10)
             // Patch 43: Huge bonus for the reserved (host) peer

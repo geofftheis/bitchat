@@ -95,7 +95,7 @@ enum TransportConfig {
     static let bleReachabilityRetentionUnverifiedSeconds: TimeInterval = 21.0  // 21s for unknown/unverified
     static let bleFragmentLifetimeSeconds: TimeInterval = 30.0
     static let bleIngressRecordLifetimeSeconds: TimeInterval = 3.0
-    static let bleConnectTimeoutBackoffWindowSeconds: TimeInterval = 120.0
+    static let bleConnectTimeoutBackoffWindowSeconds: TimeInterval = 60.0
     static let bleRecentPacketWindowSeconds: TimeInterval = 30.0
     static let bleRecentPacketWindowMaxCount: Int = 100
     // Keep scanning fully ON when we saw traffic very recently
@@ -188,7 +188,7 @@ enum TransportConfig {
     static let bleReconnectLogDebounceSeconds: TimeInterval = 2.0
 
     // Weak-link cooldown after connection timeouts
-    static let bleWeakLinkCooldownSeconds: TimeInterval = 30.0
+    static let bleWeakLinkCooldownSeconds: TimeInterval = 12.0
     static let bleWeakLinkRSSICutoff: Int = -90
 
     // Content hashing / formatting
