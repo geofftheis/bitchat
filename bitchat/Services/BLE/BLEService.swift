@@ -1820,7 +1820,9 @@ extension BLEService: CBCentralManagerDelegate {
         let currentCentralLinks = peripherals.values.filter { $0.isConnected || $0.isConnecting }.count
         let isReservedPeer = !reservedPeerPrefix.isEmpty && advertisedPeerPrefix != nil && advertisedPeerPrefix == reservedPeerPrefix
         let effectiveMaxCentralLinks: Int = {
-            guard !reservedPeerPrefix.isEmpty, maxCentralLinks > 1 else { return maxCentralLinks }
+            // Patch 53a: Removed maxCentralLinks > 1 guard so reservation works
+            // with a single slot (blocks non-host peers entirely pre-lobby).
+            guard !reservedPeerPrefix.isEmpty else { return maxCentralLinks }
             // If this peripheral IS the reserved peer, give it the full budget
             if isReservedPeer { return maxCentralLinks }
             let hostAlreadyConnected = peripherals.values.contains { state in
@@ -2084,7 +2086,8 @@ extension BLEService {
             return String(candidate.name.dropFirst(3)).lowercased() == reservedPeerPrefix
         }()
         let budget: Int = {
-            guard !reservedPeerPrefix.isEmpty, maxCentralLinks > 1 else { return maxCentralLinks }
+            // Patch 53a: Removed maxCentralLinks > 1 guard (same as discovery path).
+            guard !reservedPeerPrefix.isEmpty else { return maxCentralLinks }
             if candidateIsReserved { return maxCentralLinks }
             let hostConnected = peripherals.values.contains { state in
                 guard let pid = state.peerID else { return false }
