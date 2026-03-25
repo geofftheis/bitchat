@@ -244,6 +244,8 @@ final class BLEService: NSObject {
         let name: String
         let isConnectable: Bool
         let discoveredAt: Date
+        /// Patch 53a: Host peerID prefix extracted from advertisement (local name or manufacturer data).
+        let hostPeerPrefix: String?
     }
     private var connectionCandidates: [ConnectionCandidate] = []
     private var failureCounts: [String: Int] = [:] // Peripheral UUID -> failures
@@ -1792,9 +1794,25 @@ extension BLEService: CBCentralManagerDelegate {
         // Skip if peripheral is not connectable (per advertisement data)
         guard isConnectable else { return }
 
+        // Patch 43/53a: Extract peerID prefix early so weak-signal candidates also carry it.
+        let earlyPeerPrefix: String? = {
+            let name = String(advertisedName)
+            if name.count == 11, name.hasPrefix("H") {
+                return String(name.dropFirst(3)).lowercased()
+            }
+            if let mfgData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
+               mfgData.count >= 7 {
+                let companyId = UInt16(mfgData[0]) | (UInt16(mfgData[1]) << 8)
+                if companyId == 0xFFFF {
+                    return mfgData[3..<7].map { String(format: "%02x", $0) }.joined()
+                }
+            }
+            return nil
+        }()
+
         // Skip immediate connect if signal too weak for current conditions; enqueue instead
         if rssiValue <= dynamicRSSIThreshold {
-            connectionCandidates.append(ConnectionCandidate(peripheral: peripheral, rssi: rssiValue, name: String(advertisedName), isConnectable: isConnectable, discoveredAt: Date()))
+            connectionCandidates.append(ConnectionCandidate(peripheral: peripheral, rssi: rssiValue, name: String(advertisedName), isConnectable: isConnectable, discoveredAt: Date(), hostPeerPrefix: earlyPeerPrefix))
             // Keep list tidy
             connectionCandidates.sort { (a, b) in
                 if a.rssi != b.rssi { return a.rssi > b.rssi }
@@ -1806,13 +1824,7 @@ extension BLEService: CBCentralManagerDelegate {
             return
         }
         
-        // Patch 43: Extract peerID prefix from local name for iOS host recognition.
-        // iOS hosts advertise "H" + 2-hex metadata + 8-hex peerID prefix (11 chars).
-        let advertisedPeerPrefix: String? = {
-            let name = String(advertisedName)
-            guard name.count == 11, name.hasPrefix("H") else { return nil }
-            return String(name.dropFirst(3)).lowercased()
-        }()
+        let advertisedPeerPrefix = earlyPeerPrefix
 
         // Budget: limit simultaneous central links (connected + connecting)
         // Patch 41: Reserve one slot for the host peer if reservedPeerPrefix is set.
@@ -1835,7 +1847,7 @@ extension BLEService: CBCentralManagerDelegate {
         let totalConnections = currentCentralLinks + subscribedCentrals.count
         if currentCentralLinks >= effectiveMaxCentralLinks || totalConnections >= maxTotalConnections {
             // Enqueue as candidate; we'll attempt later as slots open
-            connectionCandidates.append(ConnectionCandidate(peripheral: peripheral, rssi: rssiValue, name: String(advertisedName), isConnectable: isConnectable, discoveredAt: Date()))
+            connectionCandidates.append(ConnectionCandidate(peripheral: peripheral, rssi: rssiValue, name: String(advertisedName), isConnectable: isConnectable, discoveredAt: Date(), hostPeerPrefix: advertisedPeerPrefix))
             // Keep candidate list tidy: prefer stronger RSSI, then recency; cap list
             connectionCandidates.sort { (a, b) in
                 if a.rssi != b.rssi { return a.rssi > b.rssi }
@@ -1850,7 +1862,7 @@ extension BLEService: CBCentralManagerDelegate {
         // Rate limit global connect attempts
         let sinceLast = Date().timeIntervalSince(lastGlobalConnectAttempt)
         if sinceLast < connectRateLimitInterval {
-            connectionCandidates.append(ConnectionCandidate(peripheral: peripheral, rssi: rssiValue, name: String(advertisedName), isConnectable: isConnectable, discoveredAt: Date()))
+            connectionCandidates.append(ConnectionCandidate(peripheral: peripheral, rssi: rssiValue, name: String(advertisedName), isConnectable: isConnectable, discoveredAt: Date(), hostPeerPrefix: advertisedPeerPrefix))
             connectionCandidates.sort { (a, b) in
                 if a.rssi != b.rssi { return a.rssi > b.rssi }
                 return a.discoveredAt < b.discoveredAt
@@ -2067,11 +2079,13 @@ extension BLEService {
             let timeoutBias = (timeoutRecent != nil && Date().timeIntervalSince(timeoutRecent!) < 30) ? 10 : 0
             let base = (c.isConnectable ? 1000 : 0) + (c.rssi + 100) * 2
             let rec = -Int(Date().timeIntervalSince(c.discoveredAt) * 10)
-            // Patch 43: Huge bonus for the reserved (host) peer
+            // Patch 43/53a: Huge bonus for the reserved (host) peer.
+            // Check both local name (iOS host) and stored hostPeerPrefix (Android host).
             let reservedBonus: Int = {
-                guard !reservedPeerPrefix.isEmpty, c.name.count == 11, c.name.hasPrefix("H") else { return 0 }
-                let prefix = String(c.name.dropFirst(3)).lowercased()
-                return prefix == reservedPeerPrefix ? 5000 : 0
+                guard !reservedPeerPrefix.isEmpty else { return 0 }
+                if let prefix = c.hostPeerPrefix, prefix == reservedPeerPrefix { return 5000 }
+                guard c.name.count == 11, c.name.hasPrefix("H") else { return 0 }
+                return String(c.name.dropFirst(3)).lowercased() == reservedPeerPrefix ? 5000 : 0
             }()
             return base + rec - penalty - timeoutBias + reservedBonus
         }
@@ -2081,8 +2095,11 @@ extension BLEService {
         // Patch 43: Reserved-peer-aware budget check.
         // If candidate IS the reserved peer, allow full budget; otherwise use reserved-slot-aware limit.
         let current = peripherals.values.filter { $0.isConnected || $0.isConnecting }.count
+        // Patch 53a: Check both hostPeerPrefix (Android) and local name (iOS).
         let candidateIsReserved: Bool = {
-            guard !reservedPeerPrefix.isEmpty, candidate.name.count == 11, candidate.name.hasPrefix("H") else { return false }
+            guard !reservedPeerPrefix.isEmpty else { return false }
+            if let prefix = candidate.hostPeerPrefix, prefix == reservedPeerPrefix { return true }
+            guard candidate.name.count == 11, candidate.name.hasPrefix("H") else { return false }
             return String(candidate.name.dropFirst(3)).lowercased() == reservedPeerPrefix
         }()
         let budget: Int = {
