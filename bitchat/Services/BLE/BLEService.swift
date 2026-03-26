@@ -236,6 +236,10 @@ final class BLEService: NSObject {
     /// Patch 52: When false, this device will not relay packets for other peers.
     var relayEnabled: Bool = true
 
+    /// Patch 54: When set, non-host packets are only relayed toward the host.
+    /// Any peer whose ID starts with this prefix is considered the host.
+    var hostPeerPrefix: String = ""
+
     private let connectRateLimitInterval: TimeInterval = TransportConfig.bleConnectRateLimitInterval
     private var lastGlobalConnectAttempt: Date = .distantPast
     private struct ConnectionCandidate {
@@ -1081,6 +1085,21 @@ final class BLEService: NSObject {
                 allowedPeripheralIDs.removeAll { $0 == id }
             case .central(let id):
                 allowedCentralIDs.removeAll { $0 == id }
+            }
+        }
+
+        // Patch 54: If the sender is NOT the host, only relay toward the host.
+        let senderHex = packet.senderID?.hexEncodedString() ?? ""
+        let hostPrefix = hostPeerPrefix
+        if !hostPrefix.isEmpty && !senderHex.hasPrefix(hostPrefix) {
+            let (_, centralPeerMap) = snapshotSubscribedCentrals()
+            allowedPeripheralIDs = allowedPeripheralIDs.filter { uuid in
+                guard let pid = states.first(where: { $0.peripheral.identifier.uuidString == uuid })?.peerID else { return false }
+                return pid.id.hasPrefix(hostPrefix)
+            }
+            allowedCentralIDs = allowedCentralIDs.filter { uuid in
+                guard let pid = centralPeerMap[uuid] else { return false }
+                return pid.id.hasPrefix(hostPrefix)
             }
         }
 
