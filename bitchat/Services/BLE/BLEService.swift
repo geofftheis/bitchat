@@ -1089,9 +1089,11 @@ final class BLEService: NSObject {
         }
 
         // Patch 54: If the sender is NOT the host, only relay toward the host.
+        // Exempt announce/requestSync packets so peer discovery still works across the mesh.
         let senderHex = packet.senderID.hexEncodedString()
         let hostPrefix = hostPeerPrefix
-        if !hostPrefix.isEmpty && !senderHex.hasPrefix(hostPrefix) {
+        let isDiscoveryPacket = packet.type == MessageType.announce.rawValue || packet.type == MessageType.requestSync.rawValue
+        if !hostPrefix.isEmpty && !senderHex.hasPrefix(hostPrefix) && !isDiscoveryPacket {
             let (_, centralPeerMap) = snapshotSubscribedCentrals()
             allowedPeripheralIDs = allowedPeripheralIDs.filter { uuid in
                 guard let pid = states.first(where: { $0.peripheral.identifier.uuidString == uuid })?.peerID else { return false }
