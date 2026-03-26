@@ -1089,7 +1089,7 @@ final class BLEService: NSObject {
         }
 
         // Patch 54: If the sender is NOT the host, only relay toward the host.
-        let senderHex = packet.senderID?.hexEncodedString() ?? ""
+        let senderHex = packet.senderID.hexEncodedString()
         let hostPrefix = hostPeerPrefix
         if !hostPrefix.isEmpty && !senderHex.hasPrefix(hostPrefix) {
             let (_, centralPeerMap) = snapshotSubscribedCentrals()
