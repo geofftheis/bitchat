@@ -3,6 +3,7 @@ import Foundation
 import CoreBluetooth
 import Combine
 import CryptoKit
+import os.log
 #if os(iOS)
 import UIKit
 #endif
@@ -1105,7 +1106,7 @@ final class BLEService: NSObject {
                 guard let pid = centralPeerMap[uuid] else { return false }
                 return pid.id.hasPrefix(hostPrefix)
             }
-            NSLog("[HW-DIAG] Patch54 filter: type=%d sender=%@ peripherals %d->%d centrals %d->%d", packet.type, String(senderHex.prefix(8)), beforePeripheralCount, allowedPeripheralIDs.count, beforeCentralCount, allowedCentralIDs.count)
+            os_log(.error, log: OSLog(subsystem: "com.halfwit.app", category: "HW-DIAG"), "[HW-DIAG] Patch54 filter: type=%d sender=%@ peripherals %d->%d centrals %d->%d", packet.type, String(senderHex.prefix(8)), beforePeripheralCount, allowedPeripheralIDs.count, beforeCentralCount, allowedCentralIDs.count)
         }
 
         // For broadcast (no directed peer) and non-fragment, choose a subset deterministically
@@ -2005,7 +2006,7 @@ func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeriph
         recentConnectTimeouts.removeValue(forKey: peripheralID)
 
         SecureLogger.debug("✅ Connected: \(peripheral.name ?? "Unknown") [\(peripheralID)]", category: .session)
-        NSLog("[HW-DIAG] BLE Connected: %@ [%@]", peripheral.name ?? "Unknown", peripheralID)
+        os_log(.error, log: OSLog(subsystem: "com.halfwit.app", category: "HW-DIAG"), "[HW-DIAG] BLE Connected: %@ [%@]", peripheral.name ?? "Unknown", peripheralID)
 
         // Discover services
         peripheral.discoverServices([serviceUUID])
@@ -2018,7 +2019,7 @@ func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeriph
         let peerID = peripherals[peripheralID]?.peerID
         
         SecureLogger.debug("📱 Disconnect: \(peerID?.id ?? peripheralID)\(error != nil ? " (\(error!.localizedDescription))" : "")", category: .session)
-        NSLog("[HW-DIAG] BLE Disconnect: %@ error=%@", peerID?.id ?? peripheralID, error?.localizedDescription ?? "none")
+        os_log(.error, log: OSLog(subsystem: "com.halfwit.app", category: "HW-DIAG"), "[HW-DIAG] BLE Disconnect: %@ error=%@", peerID?.id ?? peripheralID, error?.localizedDescription ?? "none")
 
         // If disconnect carried an error (often timeout), apply short backoff to avoid thrash
         if error != nil {
@@ -2076,7 +2077,7 @@ func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeriph
         peripherals.removeValue(forKey: peripheralID)
         
         SecureLogger.error("❌ Failed to connect to peripheral: \(peripheral.name ?? "Unknown") [\(peripheralID)] - Error: \(error?.localizedDescription ?? "Unknown")", category: .session)
-        NSLog("[HW-DIAG] BLE Connect FAILED: %@ error=%@", peripheral.name ?? "Unknown", error?.localizedDescription ?? "Unknown")
+        os_log(.error, log: OSLog(subsystem: "com.halfwit.app", category: "HW-DIAG"), "[HW-DIAG] BLE Connect FAILED: %@ error=%@", peripheral.name ?? "Unknown", error?.localizedDescription ?? "Unknown")
         failureCounts[peripheralID, default: 0] += 1
         // Try next candidate
         bleQueue.async { [weak self] in self?.tryConnectFromQueue() }
@@ -2387,7 +2388,7 @@ extension BLEService: CBPeripheralDelegate {
                 if var state = peripherals[peripheralUUID] {
                     state.peerID = senderID
                     peripherals[peripheralUUID] = state
-                    NSLog("[HW-DIAG] BLE peerID mapped: peripheral=%@ -> peer=%@", String(peripheralUUID.prefix(8)), senderID.id.prefix(8).description)
+                    os_log(.error, log: OSLog(subsystem: "com.halfwit.app", category: "HW-DIAG"), "[HW-DIAG] BLE peerID mapped: peripheral=%@ -> peer=%@", String(peripheralUUID.prefix(8)), senderID.id.prefix(8).description)
                 }
                 peerToPeripheralUUID[senderID] = peripheralUUID
                 refreshLocalTopology()
@@ -2571,7 +2572,7 @@ extension BLEService: CBPeripheralManagerDelegate {
     
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
         let centralUUID = central.identifier.uuidString
-        NSLog("[HW-DIAG] BLE Central subscribed: %@", String(centralUUID.prefix(8)))
+        os_log(.error, log: OSLog(subsystem: "com.halfwit.app", category: "HW-DIAG"), "[HW-DIAG] BLE Central subscribed: %@", String(centralUUID.prefix(8)))
         SecureLogger.debug("📥 Central subscribed: \(centralUUID)", category: .session)
         subscribedCentrals.append(central)
 
@@ -2582,7 +2583,7 @@ extension BLEService: CBPeripheralManagerDelegate {
         let overTotalLimit = (currentOutbound + currentInbound) > maxTotalConnections
         if overPeripheralLimit || overTotalLimit {
             SecureLogger.debug("Patch 50: Rejecting inbound central \(centralUUID) (inbound=\(currentInbound)/\(maxPeripheralLinks), total=\(currentOutbound + currentInbound)/\(maxTotalConnections))", category: .session)
-            NSLog("[HW-DIAG] BLE Patch50 REJECT inbound central %@ (inbound=%d/%d total=%d/%d)", String(centralUUID.prefix(8)), currentInbound, maxPeripheralLinks, currentOutbound + currentInbound, maxTotalConnections)
+            os_log(.error, log: OSLog(subsystem: "com.halfwit.app", category: "HW-DIAG"), "[HW-DIAG] BLE Patch50 REJECT inbound central %@ (inbound=%d/%d total=%d/%d)", String(centralUUID.prefix(8)), currentInbound, maxPeripheralLinks, currentOutbound + currentInbound, maxTotalConnections)
             subscribedCentrals.removeAll { $0.identifier == central.identifier }
             return
         }
@@ -3904,7 +3905,7 @@ extension BLEService {
         if packet.type != MessageType.announce.rawValue {
             // Log packet details for debugging
             SecureLogger.debug("📦 Handling packet type \(packet.type) from \(senderID), messageID: \(messageID)", category: .session)
-            NSLog("[HW-DIAG] BLE packet type=%d from=%@ msgID=%@", packet.type, senderID.id.prefix(8).description, messageID)
+            os_log(.error, log: OSLog(subsystem: "com.halfwit.app", category: "HW-DIAG"), "[HW-DIAG] BLE packet type=%d from=%@ msgID=%@", packet.type, senderID.id.prefix(8).description, messageID)
         }
         
         // Efficient deduplication
@@ -3917,7 +3918,7 @@ extension BLEService {
             // It's normal to see these as duplicates - don't log them to reduce noise
             if packet.type != MessageType.announce.rawValue {
                 SecureLogger.debug("⚠️ Duplicate packet ignored: \(messageID)", category: .session)
-                NSLog("[HW-DIAG] BLE DEDUP dropped: %@", messageID)
+                os_log(.error, log: OSLog(subsystem: "com.halfwit.app", category: "HW-DIAG"), "[HW-DIAG] BLE DEDUP dropped: %@", messageID)
             }
             // In sparse graphs (<=2 neighbors), keep the pending relay to ensure bridging.
             // In denser graphs, cancel the pending relay to reduce redundant floods.
