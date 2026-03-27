@@ -2114,6 +2114,15 @@ func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeriph
 
 // MARK: - Connection scheduling helpers
 extension BLEService {
+    /// Public entry point to re-evaluate queued connection candidates.
+    /// Called by the app layer after connection limits are raised (e.g., lobby unlock)
+    /// so that previously-rejected candidates are retried immediately.
+    func retryQueuedConnections() {
+        bleQueue.async { [weak self] in
+            self?.tryConnectFromQueue()
+        }
+    }
+
     private func tryConnectFromQueue() {
         guard let central = centralManager, central.state == .poweredOn else { return }
         let delta = Date().timeIntervalSince(lastGlobalConnectAttempt)
