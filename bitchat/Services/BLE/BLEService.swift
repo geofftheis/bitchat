@@ -1114,12 +1114,15 @@ final class BLEService: NSObject {
             }
         }
 
-        // Patch 54: If the sender is NOT the host, only relay toward the host.
-        // Exempt announce/requestSync packets so peer discovery still works across the mesh.
+        // Patch 54: Only restrict RELAYED messages from other non-host players.
+        // The player's own messages must go to ALL connections (including other players)
+        // so they can relay to the host as a backup delivery path.
+        // Exempt: host messages, own messages, discovery packets.
         let senderHex = packet.senderID.hexEncodedString()
         let hostPrefix = hostPeerPrefix
         let isDiscoveryPacket = packet.type == MessageType.announce.rawValue || packet.type == MessageType.requestSync.rawValue
-        if !hostPrefix.isEmpty && !senderHex.hasPrefix(hostPrefix) && !isDiscoveryPacket {
+        let isOwnMessage = senderHex == myPeerID.id
+        if !hostPrefix.isEmpty && !senderHex.hasPrefix(hostPrefix) && !isDiscoveryPacket && !isOwnMessage {
             let beforePeripheralCount = allowedPeripheralIDs.count
             let beforeCentralCount = allowedCentralIDs.count
             let (_, centralPeerMap) = snapshotSubscribedCentrals()
