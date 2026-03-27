@@ -2701,7 +2701,10 @@ extension BLEService: CBPeripheralManagerDelegate {
     }
     
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didUnsubscribeFrom characteristic: CBCharacteristic) {
-        SecureLogger.debug("📤 Central unsubscribed: \(central.identifier.uuidString)", category: .session)
+        let centralUUID = central.identifier.uuidString
+        let peerName = centralToPeerID[centralUUID]?.id.prefix(8).description ?? "unknown"
+        SecureLogger.debug("📤 Central unsubscribed: \(centralUUID)", category: .session)
+        NSLog("[HW-DIAG] BLE Central UNSUBSCRIBED: %@ peer=%@", String(centralUUID.prefix(8)), peerName)
         subscribedCentrals.removeAll { $0.identifier == central.identifier }
         
         // Ensure we're still advertising for other devices to find us
@@ -2711,7 +2714,6 @@ extension BLEService: CBPeripheralManagerDelegate {
         }
         
         // Find and disconnect the peer associated with this central
-        let centralUUID = central.identifier.uuidString
         if let peerID = centralToPeerID[centralUUID] {
             // Mark peer as not connected; retain for reachability
             collectionsQueue.sync(flags: .barrier) {
