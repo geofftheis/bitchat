@@ -4096,15 +4096,13 @@ extension BLEService {
 
         // Suppress announce logs to reduce noise
 
-        // Precompute signature verification outside barrier to reduce contention
+        // Patch 55b: Skip Ed25519 signature verification for ANNOUNCE packets (iOS parity).
+        // Android Patch 55 already skips all signature verification. Half-Wit is a party game
+        // with no spoofing concerns, so signature verification is unnecessary overhead.
+        // The key-mismatch check below is kept — it catches identity changes (different device
+        // claiming the same peer ID), which is a separate concern from cryptographic signatures.
         let existingPeerForVerify = collectionsQueue.sync { peers[peerID] }
-        var verifiedAnnounce = false
-        if packet.signature != nil {
-            verifiedAnnounce = noiseService.verifyPacketSignature(packet, publicKey: announcement.signingPublicKey)
-            if !verifiedAnnounce {
-                SecureLogger.warning("⚠️ Signature verification for announce failed \(peerID.id.prefix(8))", category: .security)
-            }
-        }
+        var verifiedAnnounce = true
         if let existingKey = existingPeerForVerify?.noisePublicKey, existingKey != announcement.noisePublicKey {
             SecureLogger.warning("⚠️ Announce key mismatch for \(peerID.id.prefix(8))… — keeping unverified", category: .security)
             verifiedAnnounce = false
