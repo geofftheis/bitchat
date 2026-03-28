@@ -650,6 +650,22 @@ final class BLEService: NSObject {
             centralManager?.cancelPeripheralConnection(state.peripheral)
         }
 
+        // Patch 58b: Wait for peripheral disconnections to complete before nilling
+        // the CBCentralManager. cancelPeripheralConnection is async — without this
+        // wait, the manager may be deallocated before the cancel processes, leaving
+        // the ACL link alive for ~30s (BLE supervision timeout). Poll peripheral.state
+        // until all are .disconnected rather than guessing with a fixed delay.
+        if !peripheralsToDisconnect.isEmpty {
+            let deadline = Date().addingTimeInterval(2.0)
+            while Date() < deadline {
+                let allDisconnected = peripheralsToDisconnect.allSatisfy {
+                    $0.peripheral.state == .disconnected
+                }
+                if allDisconnected { break }
+                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            }
+        }
+
         // Patch 24: Release CoreBluetooth managers immediately so they can't
         // receive callbacks or hold BLE resources after the BLEService is
         // logically stopped. Without this, ARC may keep the old managers alive
