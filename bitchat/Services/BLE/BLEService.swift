@@ -1747,6 +1747,19 @@ extension BLEService: CBCentralManagerDelegate {
 
         switch central.state {
         case .poweredOn:
+            // Patch 58b: Disconnect any peripherals still connected from a previous
+            // transport session. When stopServices() calls cancelPeripheralConnection
+            // and then nils the CBCentralManager, the cancel may not process before
+            // deallocation. The stale ACL link persists for ~30s (BLE supervision
+            // timeout), blocking the new transport from connecting to the same host.
+            // retrieveConnectedPeripherals finds system-wide connections regardless
+            // of which CBCentralManager originally created them.
+            let stalePeripherals = central.retrieveConnectedPeripherals(withServices: [serviceUUID])
+            for peripheral in stalePeripherals {
+                SecureLogger.info("Patch 58b: Disconnecting stale peripheral \(peripheral.identifier.uuidString.prefix(8)) from previous session", category: .session)
+                central.cancelPeripheralConnection(peripheral)
+            }
+
             // Start scanning - use allow duplicates for faster discovery when active
             startScanning()
 
