@@ -712,8 +712,17 @@ final class BLEService: NSObject {
         meshTopology.reset()
     }
     
+    /// Patch 59: Disconnect a specific peer by peer ID (e.g., when host removes them from the lobby).
+    func disconnectPeer(peerId: String) {
+        let pid = PeerID(str: peerId)
+        guard let peripheralUUID = peerToPeripheralUUID[pid],
+              let state = peripherals[peripheralUUID] else { return }
+        centralManager?.cancelPeripheralConnection(state.peripheral)
+        SecureLogger.info("Patch 59: Disconnected departed peer \(peerId.prefix(8))", category: .session)
+    }
+
     // MARK: Connectivity and peers
-    
+
     func isPeerConnected(_ peerID: PeerID) -> Bool {
         // Accept both 16-hex short IDs and 64-hex Noise keys
         let shortID = peerID.toShort()
