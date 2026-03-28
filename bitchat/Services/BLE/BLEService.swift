@@ -712,13 +712,35 @@ final class BLEService: NSObject {
         meshTopology.reset()
     }
     
-    /// Patch 59: Disconnect a specific peer by peer ID (e.g., when host removes them from the lobby).
+    /// Patch 59/61: Disconnect a specific peer by peer ID (e.g., when host removes them from the lobby).
+    /// Patch 61 added server-side (peripheral) cleanup: removes the departed peer's CBCentral from
+    /// subscribedCentrals so it isn't counted against inbound connection limits, enabling reconnection.
+    /// CoreBluetooth has no API to force-disconnect an inbound central; the BLE link times out naturally.
     func disconnectPeer(peerId: String) {
         let pid = PeerID(str: peerId)
-        guard let peripheralUUID = peerToPeripheralUUID[pid],
-              let state = peripherals[peripheralUUID] else { return }
-        centralManager?.cancelPeripheralConnection(state.peripheral)
-        SecureLogger.info("Patch 59: Disconnected departed peer \(peerId.prefix(8))", category: .session)
+        var disconnected = false
+
+        // Client-side (outbound): cancel our connection to their peripheral
+        if let peripheralUUID = peerToPeripheralUUID[pid],
+           let state = peripherals[peripheralUUID] {
+            centralManager?.cancelPeripheralConnection(state.peripheral)
+            disconnected = true
+        }
+
+        // Server-side (inbound): remove their CBCentral from subscribedCentrals
+        // so it doesn't count against connection limits. CoreBluetooth has no
+        // cancelConnection API for inbound centrals — the BLE link times out naturally.
+        let shortID = pid.toShort()
+        if let centralUUID = centralToPeerID.first(where: { $0.value == shortID })?.key {
+            subscribedCentrals.removeAll { $0.identifier.uuidString == centralUUID }
+            centralToPeerID.removeValue(forKey: centralUUID)
+            disconnected = true
+            SecureLogger.info("Patch 61: Removed inbound central \(centralUUID.prefix(8)) for departed peer \(peerId.prefix(8))", category: .session)
+        }
+
+        if disconnected {
+            SecureLogger.info("Patch 59/61: Disconnected departed peer \(peerId.prefix(8))", category: .session)
+        }
     }
 
     // MARK: Connectivity and peers
