@@ -651,23 +651,12 @@ final class BLEService: NSObject {
         centralManager?.stopScan()
         peripheralManager?.stopAdvertising()
 
-        // Patch 64: Remove GATT services from peripheral manager (server) FIRST
-        // so server-side registrations release their hold on ACL links. Without
-        // this, cancelPeripheralConnection polls time out because the peripheral
-        // manager keeps ACLs alive, leaving zombie links that block rejoining.
-        peripheralManager?.removeAllServices()
-        hwLog("[HW-DIAG] stopServices(): removeAllServices() complete")
-
-        // Clear inbound central references before the poll so CoreBluetooth can
-        // fully tear down those ACL links. Holding CBCentral references can keep
-        // ACL links alive even after removeAllServices().
-        bleQueue.sync {
-            subscribedCentrals.removeAll()
-            centralToPeerID.removeAll()
-        }
-        hwLog("[HW-DIAG] stopServices(): subscribedCentrals cleared")
-
-        // Disconnect all peripherals (synchronized access)
+        // Patch 67: Cancel peripheral connections FIRST while the BLE radio is fully
+        // active. Previously (Patch 64) we called removeAllServices() before canceling,
+        // which partially tore down the radio stack. cancelPeripheralConnection then
+        // couldn't send LL_TERMINATE_IND to the remote device, causing Android hosts to
+        // hold stale ACLs for ~30 seconds. With the full stack active, the radio can
+        // properly negotiate the link-layer disconnect before we tear anything down.
         let peripheralsToDisconnect = bleQueue.sync { Array(peripherals.values) }
         for state in peripheralsToDisconnect {
             let uuid = state.peripheral.identifier.uuidString.prefix(8)
@@ -677,11 +666,7 @@ final class BLEService: NSObject {
             centralManager?.cancelPeripheralConnection(state.peripheral)
         }
 
-        // Patch 58b: Wait for peripheral disconnections to complete before nilling
-        // the CBCentralManager. cancelPeripheralConnection is async — without this
-        // wait, the manager may be deallocated before the cancel processes, leaving
-        // the ACL link alive for ~30s (BLE supervision timeout). Poll peripheral.state
-        // until all are .disconnected rather than guessing with a fixed delay.
+        // Poll for disconnection while the full BLE stack is still active.
         if !peripheralsToDisconnect.isEmpty {
             let pollStart = Date()
             let deadline = Date().addingTimeInterval(2.0)
@@ -707,19 +692,17 @@ final class BLEService: NSObject {
             }
         }
 
-        // Patch 24: Release CoreBluetooth managers immediately so they can't
-        // receive callbacks or hold BLE resources after the BLEService is
-        // logically stopped. Without this, ARC may keep the old managers alive
-        // (via dispatch queues, delegate refs, etc.) while a new BLEService
-        // creates competing managers on the same radio.
-        // Note: Patch 65 (2-second radio drain) was reverted — the real cause of
-        // stale ACL links was the Android host continuing to send GATT notifications
-        // to the kicked device's subscription, not iOS failing to send LL_TERMINATE_IND.
-        // Patch 66: Clear peripherals BEFORE nilling managers. CBPeripheral objects
-        // internally retain their parent CBCentralManager. If peripherals aren't released
-        // first, the manager stays alive (ARC retained), the BLE radio stays active, and
-        // LL_TERMINATE_IND is never sent to the remote device — causing the ACL to linger
-        // for ~28 seconds until the manager is finally deallocated.
+        // NOW tear down services and clear state — radio disconnect is already done.
+        peripheralManager?.removeAllServices()
+        hwLog("[HW-DIAG] stopServices(): removeAllServices() complete")
+
+        bleQueue.sync {
+            subscribedCentrals.removeAll()
+            centralToPeerID.removeAll()
+        }
+        hwLog("[HW-DIAG] stopServices(): subscribedCentrals cleared")
+
+        // Clear peripherals and nil managers.
         bleQueue.sync { peripherals.removeAll() }
         hwLog("[HW-DIAG] stopServices(): nilling centralManager + peripheralManager")
         centralManager = nil
