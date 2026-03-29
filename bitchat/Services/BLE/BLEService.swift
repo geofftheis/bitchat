@@ -667,13 +667,13 @@ final class BLEService: NSObject {
 
         // Clear peripherals BEFORE nilling managers — CBPeripheral objects internally
         // retain CBCentralManager, preventing deallocation.
-        let peripheralCount = bleQueue.sync { () -> Int in
+        let clearedPeripheralCount = bleQueue.sync { () -> Int in
             let count = peripherals.count
             peripherals.removeAll()
             return count
         }
-        hwLog("[HW-DIAG] stopServices(): cleared \(peripheralCount) peripherals, nilling managers")
-        NSLog("[HW-DIAG] stopServices(): cleared %d peripherals, nilling managers", peripheralCount)
+        hwLog("[HW-DIAG] stopServices(): cleared \(clearedPeripheralCount) peripherals, nilling managers")
+        NSLog("[HW-DIAG] stopServices(): cleared %d peripherals, nilling managers", clearedPeripheralCount)
         centralManager = nil
         peripheralManager = nil
         hwLog("[HW-DIAG] stopServices() EXIT")
