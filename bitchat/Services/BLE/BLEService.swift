@@ -585,6 +585,11 @@ final class BLEService: NSObject {
     }
 
     func stopServices() {
+        let peripheralCount = bleQueue.sync { peripherals.values.filter { $0.isConnected }.count }
+        let centralCount = bleQueue.sync { subscribedCentrals.count }
+        hwLog("[HW-DIAG] stopServices() ENTER: \(peripheralCount) connected peripherals, \(centralCount) subscribed centrals")
+        NSLog("[HW-DIAG] stopServices() ENTER: %d connected peripherals, %d subscribed centrals", peripheralCount, centralCount)
+
         // Send leave message synchronously to ensure delivery
         let leavePacket = BitchatPacket(
             type: MessageType.leave.rawValue,
@@ -649,6 +654,7 @@ final class BLEService: NSObject {
         // this, cancelPeripheralConnection polls time out because the peripheral
         // manager keeps ACLs alive, leaving zombie links that block rejoining.
         peripheralManager?.removeAllServices()
+        hwLog("[HW-DIAG] stopServices(): removeAllServices() complete")
 
         // Clear inbound central references before the poll so CoreBluetooth can
         // fully tear down those ACL links. Holding CBCentral references can keep
@@ -657,10 +663,15 @@ final class BLEService: NSObject {
             subscribedCentrals.removeAll()
             centralToPeerID.removeAll()
         }
+        hwLog("[HW-DIAG] stopServices(): subscribedCentrals cleared")
 
         // Disconnect all peripherals (synchronized access)
         let peripheralsToDisconnect = bleQueue.sync { Array(peripherals.values) }
         for state in peripheralsToDisconnect {
+            let uuid = state.peripheral.identifier.uuidString.prefix(8)
+            let currentState = state.peripheral.state.rawValue
+            hwLog("[HW-DIAG] stopServices(): cancelPeripheralConnection(\(uuid)) state=\(currentState)")
+            NSLog("[HW-DIAG] stopServices(): cancelPeripheralConnection(%@) state=%d", String(uuid), currentState)
             centralManager?.cancelPeripheralConnection(state.peripheral)
         }
 
@@ -670,13 +681,27 @@ final class BLEService: NSObject {
         // the ACL link alive for ~30s (BLE supervision timeout). Poll peripheral.state
         // until all are .disconnected rather than guessing with a fixed delay.
         if !peripheralsToDisconnect.isEmpty {
+            let pollStart = Date()
             let deadline = Date().addingTimeInterval(2.0)
+            var pollTimedOut = true
             while Date() < deadline {
                 let allDisconnected = peripheralsToDisconnect.allSatisfy {
                     $0.peripheral.state == .disconnected
                 }
-                if allDisconnected { break }
+                if allDisconnected {
+                    pollTimedOut = false
+                    break
+                }
                 RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            }
+            let elapsed = Date().timeIntervalSince(pollStart)
+            let statesSummary = peripheralsToDisconnect.map { "\($0.peripheral.identifier.uuidString.prefix(8))=\($0.peripheral.state.rawValue)" }.joined(separator: ", ")
+            if pollTimedOut {
+                hwLog("[HW-DIAG] stopServices(): POLL TIMED OUT after \(String(format: "%.1f", elapsed))s — states: \(statesSummary)")
+                NSLog("[HW-DIAG] stopServices(): POLL TIMED OUT after %.1fs — states: %@", elapsed, statesSummary)
+            } else {
+                hwLog("[HW-DIAG] stopServices(): poll SUCCESS in \(String(format: "%.3f", elapsed))s — all peripherals disconnected")
+                NSLog("[HW-DIAG] stopServices(): poll SUCCESS in %.3fs — all peripherals disconnected", elapsed)
             }
         }
 
@@ -685,11 +710,18 @@ final class BLEService: NSObject {
         // logically stopped. Without this, ARC may keep the old managers alive
         // (via dispatch queues, delegate refs, etc.) while a new BLEService
         // creates competing managers on the same radio.
+        hwLog("[HW-DIAG] stopServices(): nilling centralManager + peripheralManager")
         centralManager = nil
         peripheralManager = nil
+        hwLog("[HW-DIAG] stopServices() EXIT")
     }
     
     func emergencyDisconnectAll() {
+        let peerCount = collectionsQueue.sync { peers.count }
+        let peripheralCount = bleQueue.sync { peripherals.count }
+        let centralCount = bleQueue.sync { subscribedCentrals.count }
+        hwLog("[HW-DIAG] emergencyDisconnectAll() ENTER: \(peerCount) peers, \(peripheralCount) peripherals, \(centralCount) centrals")
+        NSLog("[HW-DIAG] emergencyDisconnectAll() ENTER: %d peers, %d peripherals, %d centrals", peerCount, peripheralCount, centralCount)
         stopServices()
 
         // Clear all sessions and peers
@@ -731,7 +763,11 @@ final class BLEService: NSObject {
     /// CoreBluetooth has no API to force-disconnect an inbound central; the BLE link times out naturally.
     func disconnectPeer(peerId: String) {
         let pid = PeerID(str: peerId)
-        var disconnected = false
+        var foundServer = false
+        var foundClient = false
+
+        hwLog("[HW-DIAG] disconnectPeer(\(peerId.prefix(8))) ENTER")
+        NSLog("[HW-DIAG] disconnectPeer(%@) ENTER", String(peerId.prefix(8)))
 
         // Server-side (inbound): remove their CBCentral from subscribedCentrals FIRST
         // so it doesn't count against connection limits and releases the reference that
@@ -741,7 +777,8 @@ final class BLEService: NSObject {
         if let centralUUID = centralToPeerID.first(where: { $0.value == shortID })?.key {
             subscribedCentrals.removeAll { $0.identifier.uuidString == centralUUID }
             centralToPeerID.removeValue(forKey: centralUUID)
-            disconnected = true
+            foundServer = true
+            hwLog("[HW-DIAG] disconnectPeer: removed inbound central \(centralUUID.prefix(8))")
             SecureLogger.info("Patch 61: Removed inbound central \(centralUUID.prefix(8)) for departed peer \(peerId.prefix(8))", category: .session)
         }
 
@@ -750,20 +787,36 @@ final class BLEService: NSObject {
         // ACL link lingers and blocks connection slots for rejoining.
         if let peripheralUUID = peerToPeripheralUUID[pid],
            let state = peripherals[peripheralUUID] {
+            let uuid = state.peripheral.identifier.uuidString.prefix(8)
+            let preState = state.peripheral.state.rawValue
+            hwLog("[HW-DIAG] disconnectPeer: cancelPeripheralConnection(\(uuid)) preState=\(preState)")
             centralManager?.cancelPeripheralConnection(state.peripheral)
-            disconnected = true
+            foundClient = true
 
             // Poll until disconnected (same pattern as stopServices)
+            let pollStart = Date()
             let deadline = Date().addingTimeInterval(2.0)
+            var pollTimedOut = true
             while Date() < deadline {
-                if state.peripheral.state == .disconnected { break }
+                if state.peripheral.state == .disconnected {
+                    pollTimedOut = false
+                    break
+                }
                 RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            }
+            let elapsed = Date().timeIntervalSince(pollStart)
+            let postState = state.peripheral.state.rawValue
+            if pollTimedOut {
+                hwLog("[HW-DIAG] disconnectPeer: POLL TIMED OUT after \(String(format: "%.1f", elapsed))s — postState=\(postState)")
+                NSLog("[HW-DIAG] disconnectPeer: POLL TIMED OUT after %.1fs — postState=%d", elapsed, postState)
+            } else {
+                hwLog("[HW-DIAG] disconnectPeer: poll SUCCESS in \(String(format: "%.3f", elapsed))s")
+                NSLog("[HW-DIAG] disconnectPeer: poll SUCCESS in %.3fs", elapsed)
             }
         }
 
-        if disconnected {
-            SecureLogger.info("Patch 59/61: Disconnected departed peer \(peerId.prefix(8))", category: .session)
-        }
+        hwLog("[HW-DIAG] disconnectPeer(\(peerId.prefix(8))) EXIT — foundServer=\(foundServer) foundClient=\(foundClient)")
+        NSLog("[HW-DIAG] disconnectPeer(%@) EXIT — foundServer=%d foundClient=%d", String(peerId.prefix(8)), foundServer ? 1 : 0, foundClient ? 1 : 0)
     }
 
     // MARK: Connectivity and peers
@@ -2129,8 +2182,11 @@ func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeriph
         // Find the peer ID if we have it
         let peerID = peripherals[peripheralID]?.peerID
         
+        let remainingPeripherals = peripherals.values.filter { $0.isConnected }.count
+        let remainingCentrals = subscribedCentrals.count
         SecureLogger.debug("📱 Disconnect: \(peerID?.id ?? peripheralID)\(error != nil ? " (\(error!.localizedDescription))" : "")", category: .session)
-        hwLog("[HW-DIAG] BLE Disconnect: \(peerID?.id ?? peripheralID) error=\(error?.localizedDescription ?? "none")")
+        hwLog("[HW-DIAG] BLE Disconnect: \(peerID?.id ?? peripheralID) error=\(error?.localizedDescription ?? "none") remaining: \(remainingPeripherals) peripherals, \(remainingCentrals) centrals")
+        NSLog("[HW-DIAG] BLE Disconnect: %@ error=%@ remaining: %d peripherals, %d centrals", peerID?.id ?? peripheralID, error?.localizedDescription ?? "none", remainingPeripherals, remainingCentrals)
 
         // If disconnect carried an error (often timeout), apply short backoff to avoid thrash
         if error != nil {
