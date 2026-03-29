@@ -1996,8 +1996,11 @@ extension BLEService: CBCentralManagerDelegate {
             return hostAlreadyConnected ? maxCentralLinks : maxCentralLinks - 1
         }()
         // Patch 50: Also check total connection limit (outbound + inbound)
+        // Patch 70: Host connection always bypasses the total limit — phantom inbound
+        // ACLs from other players (which can't be force-closed on iOS) must never block
+        // the host connection.
         let totalConnections = currentCentralLinks + subscribedCentrals.count
-        if currentCentralLinks >= effectiveMaxCentralLinks || totalConnections >= maxTotalConnections {
+        if currentCentralLinks >= effectiveMaxCentralLinks || (!isReservedPeer && totalConnections >= maxTotalConnections) {
             // Enqueue as candidate; we'll attempt later as slots open
             connectionCandidates.append(ConnectionCandidate(peripheral: peripheral, rssi: rssiValue, name: String(advertisedName), isConnectable: isConnectable, discoveredAt: Date(), hostPeerPrefix: advertisedPeerPrefix))
             // Keep candidate list tidy: prefer stronger RSSI, then recency; cap list
@@ -2280,8 +2283,9 @@ extension BLEService {
             return hostConnected ? maxCentralLinks : maxCentralLinks - 1
         }()
         // Patch 50: Also check total connection limit (outbound + inbound)
+        // Patch 70: Host connection bypasses total limit (same as discovery path).
         let totalForCandidate = current + subscribedCentrals.count
-        guard current < budget && totalForCandidate < maxTotalConnections else {
+        guard current < budget && (candidateIsReserved || totalForCandidate < maxTotalConnections) else {
             // Re-enqueue if not the reserved peer
             connectionCandidates.append(candidate)
             return
