@@ -650,6 +650,14 @@ final class BLEService: NSObject {
         // manager keeps ACLs alive, leaving zombie links that block rejoining.
         peripheralManager?.removeAllServices()
 
+        // Clear inbound central references before the poll so CoreBluetooth can
+        // fully tear down those ACL links. Holding CBCentral references can keep
+        // ACL links alive even after removeAllServices().
+        bleQueue.sync {
+            subscribedCentrals.removeAll()
+            centralToPeerID.removeAll()
+        }
+
         // Disconnect all peripherals (synchronized access)
         let peripheralsToDisconnect = bleQueue.sync { Array(peripherals.values) }
         for state in peripheralsToDisconnect {
@@ -725,22 +733,32 @@ final class BLEService: NSObject {
         let pid = PeerID(str: peerId)
         var disconnected = false
 
-        // Client-side (outbound): cancel our connection to their peripheral
-        if let peripheralUUID = peerToPeripheralUUID[pid],
-           let state = peripherals[peripheralUUID] {
-            centralManager?.cancelPeripheralConnection(state.peripheral)
-            disconnected = true
-        }
-
-        // Server-side (inbound): remove their CBCentral from subscribedCentrals
-        // so it doesn't count against connection limits. CoreBluetooth has no
-        // cancelConnection API for inbound centrals — the BLE link times out naturally.
+        // Server-side (inbound): remove their CBCentral from subscribedCentrals FIRST
+        // so it doesn't count against connection limits and releases the reference that
+        // can keep ACL links alive. CoreBluetooth has no cancelConnection API for inbound
+        // centrals — clearing the reference lets the ACL time out.
         let shortID = pid.toShort()
         if let centralUUID = centralToPeerID.first(where: { $0.value == shortID })?.key {
             subscribedCentrals.removeAll { $0.identifier.uuidString == centralUUID }
             centralToPeerID.removeValue(forKey: centralUUID)
             disconnected = true
             SecureLogger.info("Patch 61: Removed inbound central \(centralUUID.prefix(8)) for departed peer \(peerId.prefix(8))", category: .session)
+        }
+
+        // Client-side (outbound): cancel our connection to their peripheral and poll
+        // for ACL teardown. cancelPeripheralConnection is async — without polling, the
+        // ACL link lingers and blocks connection slots for rejoining.
+        if let peripheralUUID = peerToPeripheralUUID[pid],
+           let state = peripherals[peripheralUUID] {
+            centralManager?.cancelPeripheralConnection(state.peripheral)
+            disconnected = true
+
+            // Poll until disconnected (same pattern as stopServices)
+            let deadline = Date().addingTimeInterval(2.0)
+            while Date() < deadline {
+                if state.peripheral.state == .disconnected { break }
+                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            }
         }
 
         if disconnected {
