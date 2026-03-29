@@ -651,48 +651,11 @@ final class BLEService: NSObject {
         centralManager?.stopScan()
         peripheralManager?.stopAdvertising()
 
-        // Patch 67: Cancel peripheral connections FIRST while the BLE radio is fully
-        // active. Previously (Patch 64) we called removeAllServices() before canceling,
-        // which partially tore down the radio stack. cancelPeripheralConnection then
-        // couldn't send LL_TERMINATE_IND to the remote device, causing Android hosts to
-        // hold stale ACLs for ~30 seconds. With the full stack active, the radio can
-        // properly negotiate the link-layer disconnect before we tear anything down.
-        let peripheralsToDisconnect = bleQueue.sync { Array(peripherals.values) }
-        for state in peripheralsToDisconnect {
-            let uuid = state.peripheral.identifier.uuidString.prefix(8)
-            let currentState = state.peripheral.state.rawValue
-            hwLog("[HW-DIAG] stopServices(): cancelPeripheralConnection(\(uuid)) state=\(currentState)")
-            NSLog("[HW-DIAG] stopServices(): cancelPeripheralConnection(%@) state=%d", String(uuid), currentState)
-            centralManager?.cancelPeripheralConnection(state.peripheral)
-        }
-
-        // Poll for disconnection while the full BLE stack is still active.
-        if !peripheralsToDisconnect.isEmpty {
-            let pollStart = Date()
-            let deadline = Date().addingTimeInterval(2.0)
-            var pollTimedOut = true
-            while Date() < deadline {
-                let allDisconnected = peripheralsToDisconnect.allSatisfy {
-                    $0.peripheral.state == .disconnected
-                }
-                if allDisconnected {
-                    pollTimedOut = false
-                    break
-                }
-                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-            }
-            let elapsed = Date().timeIntervalSince(pollStart)
-            let statesSummary = peripheralsToDisconnect.map { "\($0.peripheral.identifier.uuidString.prefix(8))=\($0.peripheral.state.rawValue)" }.joined(separator: ", ")
-            if pollTimedOut {
-                hwLog("[HW-DIAG] stopServices(): POLL TIMED OUT after \(String(format: "%.1f", elapsed))s — states: \(statesSummary)")
-                NSLog("[HW-DIAG] stopServices(): POLL TIMED OUT after %.1fs — states: %@", elapsed, statesSummary)
-            } else {
-                hwLog("[HW-DIAG] stopServices(): poll SUCCESS in \(String(format: "%.3f", elapsed))s — all peripherals disconnected")
-                NSLog("[HW-DIAG] stopServices(): poll SUCCESS in %.3fs — all peripherals disconnected", elapsed)
-            }
-        }
-
-        // NOW tear down services and clear state — radio disconnect is already done.
+        // Patch 69: Skip cancelPeripheralConnection entirely — it does NOT send
+        // LL_TERMINATE_IND to Android hosts, causing stale ACLs for ~30 seconds.
+        // Instead, clear all state and nil the CBCentralManager directly.
+        // CoreBluetooth's deallocation path should force-close all connections
+        // at the radio level when the manager is destroyed.
         peripheralManager?.removeAllServices()
         hwLog("[HW-DIAG] stopServices(): removeAllServices() complete")
 
@@ -702,9 +665,15 @@ final class BLEService: NSObject {
         }
         hwLog("[HW-DIAG] stopServices(): subscribedCentrals cleared")
 
-        // Clear peripherals and nil managers.
-        bleQueue.sync { peripherals.removeAll() }
-        hwLog("[HW-DIAG] stopServices(): nilling centralManager + peripheralManager")
+        // Clear peripherals BEFORE nilling managers — CBPeripheral objects internally
+        // retain CBCentralManager, preventing deallocation.
+        let peripheralCount = bleQueue.sync { () -> Int in
+            let count = peripherals.count
+            peripherals.removeAll()
+            return count
+        }
+        hwLog("[HW-DIAG] stopServices(): cleared \(peripheralCount) peripherals, nilling managers")
+        NSLog("[HW-DIAG] stopServices(): cleared %d peripherals, nilling managers", peripheralCount)
         centralManager = nil
         peripheralManager = nil
         hwLog("[HW-DIAG] stopServices() EXIT")
