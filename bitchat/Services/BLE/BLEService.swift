@@ -265,6 +265,10 @@ final class BLEService: NSObject {
     // Empty list means no filtering (allow all — used by host and during initial scan).
     var approvedPeerPrefixes: Set<String> = []
 
+    // Patch 72: Track last message received time per outbound (peripheral) connection.
+    // Used to detect phantom connections that were never subscribed on the remote side.
+    private var lastMessageFromPeripheral: [UUID: Date] = [:]  // peripheral UUID → last message time
+
     /// Patch 52: When false, this device will not relay packets for other peers.
     var relayEnabled: Bool = true
 
@@ -722,6 +726,7 @@ final class BLEService: NSObject {
             subscribedCentrals.removeAll()
             centralToPeerID.removeAll()
             centralSubscriptionRateLimits.removeAll()
+            lastMessageFromPeripheral.removeAll()
         }
         meshTopology.reset()
     }
@@ -786,6 +791,34 @@ final class BLEService: NSObject {
 
         hwLog("[HW-DIAG] disconnectPeer(\(peerId.prefix(8))) EXIT — foundServer=\(foundServer) foundClient=\(foundClient)")
         NSLog("[HW-DIAG] disconnectPeer(%@) EXIT — foundServer=%d foundClient=%d", String(peerId.prefix(8)), foundServer ? 1 : 0, foundClient ? 1 : 0)
+    }
+
+    /// Patch 72: Close outbound connections that haven't received any messages
+    /// within the stale threshold. These are phantom connections where the remote
+    /// device rejected our subscription. Since we're the central (outbound), we
+    /// CAN close these connections — unlike inbound phantoms.
+    func cleanupStaleOutboundConnections(staleThresholdSeconds: TimeInterval = 6.0) {
+        let now = Date()
+        let connectedPeripherals = peripherals.values.filter { $0.isConnected }
+        for state in connectedPeripherals {
+            let uuid = state.peripheral.identifier
+            // Skip the host connection — never auto-close it
+            if let pid = state.peerID, pid.id.hasPrefix(reservedPeerPrefix), !reservedPeerPrefix.isEmpty {
+                continue
+            }
+            if let lastMsg = lastMessageFromPeripheral[uuid] {
+                let elapsed = now.timeIntervalSince(lastMsg)
+                if elapsed > staleThresholdSeconds {
+                    let short = uuid.uuidString.prefix(8)
+                    let peerStr = state.peerID?.id.prefix(8) ?? "unknown"
+                    hwLog("[HW-DIAG] Patch 72: Closing stale outbound to \(short) (peer=\(peerStr), silent for \(String(format: "%.1f", elapsed))s)")
+                    NSLog("[HW-DIAG] Patch 72: Closing stale outbound to %@ (peer=%@, silent for %.1fs)", String(short), String(peerStr), elapsed)
+                    centralManager?.cancelPeripheralConnection(state.peripheral)
+                    lastMessageFromPeripheral.removeValue(forKey: uuid)
+                }
+            }
+            // No entry = just connected, grace period still active (set in didConnect)
+        }
     }
 
     // MARK: Connectivity and peers
@@ -2131,7 +2164,10 @@ extension BLEService: CBCentralManagerDelegate {
     
 func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         let peripheralID = peripheral.identifier.uuidString
-        
+
+        // Patch 72: Initialize last-message timestamp so new connections get a grace period
+        lastMessageFromPeripheral[peripheral.identifier] = Date()
+
         // Update state to connected
         if var state = peripherals[peripheralID] {
             state.isConnecting = false
@@ -2477,6 +2513,9 @@ extension BLEService: CBPeripheralDelegate {
             SecureLogger.warning("⚠️ No data in notification", category: .session)
             return
         }
+
+        // Patch 72: Track last message time for stale connection detection
+        lastMessageFromPeripheral[peripheral.identifier] = Date()
 
         bufferNotificationChunk(data, from: peripheral)
     }
