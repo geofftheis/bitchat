@@ -263,11 +263,20 @@ final class BLEService: NSObject {
     // Populated from the game's player list on every LobbySync. Prevents mesh connections
     // to devices that haven't been approved by the host (e.g., pre-lobby rejoiners).
     // Empty list means no filtering (allow all — used by host and during initial scan).
-    var approvedPeerPrefixes: Set<String> = []
+    var approvedPeerPrefixes: Set<String> = [] {
+        didSet {
+            // Patch 72b: Prune rejected peers that are no longer approved (they left the game)
+            rejectedPeerPrefixes = rejectedPeerPrefixes.intersection(approvedPeerPrefixes)
+        }
+    }
 
     // Patch 72: Track last message received time per outbound (peripheral) connection.
     // Used to detect phantom connections that were never subscribed on the remote side.
     private var lastMessageFromPeripheral: [UUID: Date] = [:]  // peripheral UUID → last message time
+
+    // Patch 72b: Peers whose outbound connections were closed as stale.
+    // Prevents reconnection cycles. Pruned when approved list changes.
+    private var rejectedPeerPrefixes: Set<String> = []
 
     /// Patch 52: When false, this device will not relay packets for other peers.
     var relayEnabled: Bool = true
@@ -727,6 +736,7 @@ final class BLEService: NSObject {
             centralToPeerID.removeAll()
             centralSubscriptionRateLimits.removeAll()
             lastMessageFromPeripheral.removeAll()
+            rejectedPeerPrefixes.removeAll()
         }
         meshTopology.reset()
     }
@@ -815,6 +825,10 @@ final class BLEService: NSObject {
                     NSLog("[HW-DIAG] Patch 72: Closing stale outbound to %@ (peer=%@, silent for %.1fs)", String(short), String(peerStr), elapsed)
                     centralManager?.cancelPeripheralConnection(state.peripheral)
                     lastMessageFromPeripheral.removeValue(forKey: uuid)
+                    // Patch 72b: Prevent reconnection cycle
+                    if let prefix = state.peerID?.id.prefix(8) {
+                        rejectedPeerPrefixes.insert(String(prefix))
+                    }
                 }
             }
             // No entry = just connected, grace period still active (set in didConnect)
@@ -2022,12 +2036,14 @@ extension BLEService: CBCentralManagerDelegate {
         let isReservedPeer = !reservedPeerPrefix.isEmpty && advertisedPeerPrefix != nil && advertisedPeerPrefix == reservedPeerPrefix
         if !isReservedPeer && !approvedPeerPrefixes.isEmpty {
             if let prefix = advertisedPeerPrefix, !approvedPeerPrefixes.contains(prefix) {
-                // Not an approved peer — skip silently
                 return
             } else if advertisedPeerPrefix == nil {
-                // Can't identify peer — skip
                 return
             }
+        }
+        // Patch 72b: Skip peers whose previous connection was closed as stale
+        if !isReservedPeer, let prefix = advertisedPeerPrefix, rejectedPeerPrefixes.contains(prefix) {
+            return
         }
 
         // Budget: limit simultaneous central links (connected + connecting)
@@ -2325,10 +2341,8 @@ extension BLEService {
             return false
         }()
         if !candidateIsApproved {
-            // Drop unapproved candidate — don't re-enqueue
             return
         }
-
         // Patch 43: Reserved-peer-aware budget check.
         // If candidate IS the reserved peer, allow full budget; otherwise use reserved-slot-aware limit.
         let current = peripherals.values.filter { $0.isConnected || $0.isConnecting }.count
@@ -2339,6 +2353,10 @@ extension BLEService {
             guard candidate.name.count == 11, candidate.name.hasPrefix("H") else { return false }
             return String(candidate.name.dropFirst(3)).lowercased() == reservedPeerPrefix
         }()
+        // Patch 72b: Skip rejected peers in retry queue
+        if !candidateIsReserved, let prefix = candidate.hostPeerPrefix, rejectedPeerPrefixes.contains(prefix) {
+            return
+        }
         let budget: Int = {
             // Patch 53a: Removed maxCentralLinks > 1 guard (same as discovery path).
             guard !reservedPeerPrefix.isEmpty else { return maxCentralLinks }
