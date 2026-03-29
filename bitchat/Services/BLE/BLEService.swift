@@ -259,6 +259,12 @@ final class BLEService: NSObject {
     // fill (maxCentralLinks - 1) slots until the reserved peer is connected.
     var reservedPeerPrefix: String = ""
 
+    // Patch 71: Approved peer prefixes — only connect outbound to peers in this list.
+    // Populated from the game's player list on every LobbySync. Prevents mesh connections
+    // to devices that haven't been approved by the host (e.g., pre-lobby rejoiners).
+    // Empty list means no filtering (allow all — used by host and during initial scan).
+    var approvedPeerPrefixes: Set<String> = []
+
     /// Patch 52: When false, this device will not relay packets for other peers.
     var relayEnabled: Bool = true
 
@@ -1978,11 +1984,24 @@ extension BLEService: CBCentralManagerDelegate {
         
         let advertisedPeerPrefix = earlyPeerPrefix
 
+        // Patch 71: Only connect to approved peers (if list is populated).
+        // The host (reservedPeerPrefix) always bypasses this check.
+        let isReservedPeer = !reservedPeerPrefix.isEmpty && advertisedPeerPrefix != nil && advertisedPeerPrefix == reservedPeerPrefix
+        if !isReservedPeer && !approvedPeerPrefixes.isEmpty {
+            if let prefix = advertisedPeerPrefix, !approvedPeerPrefixes.contains(prefix) {
+                // Not an approved peer — skip silently
+                return
+            } else if advertisedPeerPrefix == nil {
+                // Can't identify peer — skip
+                return
+            }
+        }
+
         // Budget: limit simultaneous central links (connected + connecting)
         // Patch 41: Reserve one slot for the host peer if reservedPeerPrefix is set.
         // Patch 43: Also recognize reserved peer from advertised local name.
         let currentCentralLinks = peripherals.values.filter { $0.isConnected || $0.isConnecting }.count
-        let isReservedPeer = !reservedPeerPrefix.isEmpty && advertisedPeerPrefix != nil && advertisedPeerPrefix == reservedPeerPrefix
+        // isReservedPeer already computed above (Patch 71)
         let effectiveMaxCentralLinks: Int = {
             // Patch 53a: Removed maxCentralLinks > 1 guard so reservation works
             // with a single slot (blocks non-host peers entirely pre-lobby).
@@ -2261,6 +2280,18 @@ extension BLEService {
         }
         connectionCandidates.sort { score($0) > score($1) }
         let candidate = connectionCandidates.removeFirst()
+
+        // Patch 71: Filter out unapproved peers from the retry queue.
+        let candidateIsApproved: Bool = {
+            guard !approvedPeerPrefixes.isEmpty else { return true } // no filter active
+            if let prefix = candidate.hostPeerPrefix, prefix == reservedPeerPrefix { return true } // host always allowed
+            if let prefix = candidate.hostPeerPrefix { return approvedPeerPrefixes.contains(prefix) }
+            return false
+        }()
+        if !candidateIsApproved {
+            // Drop unapproved candidate — don't re-enqueue
+            return
+        }
 
         // Patch 43: Reserved-peer-aware budget check.
         // If candidate IS the reserved peer, allow full budget; otherwise use reserved-slot-aware limit.
