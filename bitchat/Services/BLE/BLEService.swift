@@ -705,19 +705,14 @@ final class BLEService: NSObject {
             }
         }
 
-        // Patch 65: Clear delegates immediately to stop callbacks, then wait
-        // 2 seconds before nilling managers. This gives the BLE radio time to
-        // send LL_TERMINATE_IND to the remote device before we deallocate the
-        // CoreBluetooth stack. Without this delay, the remote device's ACL link
-        // lingers for 20-35 seconds, blocking reconnection attempts.
-        hwLog("[HW-DIAG] stopServices(): clearing delegates, waiting 2s for radio disconnect")
-        NSLog("[HW-DIAG] stopServices(): clearing delegates, waiting 2s for radio disconnect")
-        centralManager?.delegate = nil
-        peripheralManager?.delegate = nil
-        let radioDeadline = Date().addingTimeInterval(2.0)
-        while Date() < radioDeadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-        }
+        // Patch 24: Release CoreBluetooth managers immediately so they can't
+        // receive callbacks or hold BLE resources after the BLEService is
+        // logically stopped. Without this, ARC may keep the old managers alive
+        // (via dispatch queues, delegate refs, etc.) while a new BLEService
+        // creates competing managers on the same radio.
+        // Note: Patch 65 (2-second radio drain) was reverted — the real cause of
+        // stale ACL links was the Android host continuing to send GATT notifications
+        // to the kicked device's subscription, not iOS failing to send LL_TERMINATE_IND.
         hwLog("[HW-DIAG] stopServices(): nilling centralManager + peripheralManager")
         centralManager = nil
         peripheralManager = nil
