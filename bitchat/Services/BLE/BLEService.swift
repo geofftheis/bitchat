@@ -644,6 +644,12 @@ final class BLEService: NSObject {
         centralManager?.stopScan()
         peripheralManager?.stopAdvertising()
 
+        // Patch 64: Remove GATT services from peripheral manager (server) FIRST
+        // so server-side registrations release their hold on ACL links. Without
+        // this, cancelPeripheralConnection polls time out because the peripheral
+        // manager keeps ACLs alive, leaving zombie links that block rejoining.
+        peripheralManager?.removeAllServices()
+
         // Disconnect all peripherals (synchronized access)
         let peripheralsToDisconnect = bleQueue.sync { Array(peripherals.values) }
         for state in peripheralsToDisconnect {
@@ -671,7 +677,6 @@ final class BLEService: NSObject {
         // logically stopped. Without this, ARC may keep the old managers alive
         // (via dispatch queues, delegate refs, etc.) while a new BLEService
         // creates competing managers on the same radio.
-        peripheralManager?.removeAllServices()
         centralManager = nil
         peripheralManager = nil
     }
