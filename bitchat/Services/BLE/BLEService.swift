@@ -415,6 +415,8 @@ final class BLEService: NSObject {
     // No advertising policy to set; we never include Local Name in adverts.
     
     deinit {
+        NSLog("[HW-DIAG] BLEService deinit — centralManager is \(centralManager == nil ? "nil" : "alive")")
+        hwLog("[HW-DIAG] BLEService deinit — centralManager is \(centralManager == nil ? "nil" : "alive")")
         maintenanceTimer?.cancel()
         scanDutyTimer?.cancel()
         scanDutyTimer = nil
@@ -713,6 +715,12 @@ final class BLEService: NSObject {
         // Note: Patch 65 (2-second radio drain) was reverted — the real cause of
         // stale ACL links was the Android host continuing to send GATT notifications
         // to the kicked device's subscription, not iOS failing to send LL_TERMINATE_IND.
+        // Patch 66: Clear peripherals BEFORE nilling managers. CBPeripheral objects
+        // internally retain their parent CBCentralManager. If peripherals aren't released
+        // first, the manager stays alive (ARC retained), the BLE radio stays active, and
+        // LL_TERMINATE_IND is never sent to the remote device — causing the ACL to linger
+        // for ~28 seconds until the manager is finally deallocated.
+        bleQueue.sync { peripherals.removeAll() }
         hwLog("[HW-DIAG] stopServices(): nilling centralManager + peripheralManager")
         centralManager = nil
         peripheralManager = nil
