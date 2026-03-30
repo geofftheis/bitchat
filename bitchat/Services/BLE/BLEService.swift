@@ -259,25 +259,6 @@ final class BLEService: NSObject {
     // fill (maxCentralLinks - 1) slots until the reserved peer is connected.
     var reservedPeerPrefix: String = ""
 
-    // Patch 71: Approved peer prefixes — only connect outbound to peers in this list.
-    // Populated from the game's player list on every LobbySync. Prevents mesh connections
-    // to devices that haven't been approved by the host (e.g., pre-lobby rejoiners).
-    // Empty list means no filtering (allow all — used by host and during initial scan).
-    var approvedPeerPrefixes: Set<String> = [] {
-        didSet {
-            // Patch 72b: Prune rejected peers that are no longer approved (they left the game)
-            rejectedPeerPrefixes = rejectedPeerPrefixes.intersection(approvedPeerPrefixes)
-        }
-    }
-
-    // Patch 72: Track last message received time per outbound (peripheral) connection.
-    // Used to detect phantom connections that were never subscribed on the remote side.
-    private var lastMessageFromPeripheral: [UUID: Date] = [:]  // peripheral UUID → last message time
-
-    // Patch 72b: Peers whose outbound connections were closed as stale.
-    // Prevents reconnection cycles. Pruned when approved list changes.
-    private var rejectedPeerPrefixes: Set<String> = []
-
     /// Patch 52: When false, this device will not relay packets for other peers.
     var relayEnabled: Bool = true
 
@@ -735,8 +716,6 @@ final class BLEService: NSObject {
             subscribedCentrals.removeAll()
             centralToPeerID.removeAll()
             centralSubscriptionRateLimits.removeAll()
-            lastMessageFromPeripheral.removeAll()
-            rejectedPeerPrefixes.removeAll()
         }
         meshTopology.reset()
     }
@@ -801,38 +780,6 @@ final class BLEService: NSObject {
 
         hwLog("[HW-DIAG] disconnectPeer(\(peerId.prefix(8))) EXIT — foundServer=\(foundServer) foundClient=\(foundClient)")
         NSLog("[HW-DIAG] disconnectPeer(%@) EXIT — foundServer=%d foundClient=%d", String(peerId.prefix(8)), foundServer ? 1 : 0, foundClient ? 1 : 0)
-    }
-
-    /// Patch 72: Close outbound connections that haven't received any messages
-    /// within the stale threshold. These are phantom connections where the remote
-    /// device rejected our subscription. Since we're the central (outbound), we
-    /// CAN close these connections — unlike inbound phantoms.
-    func cleanupStaleOutboundConnections(staleThresholdSeconds: TimeInterval = 6.0) {
-        let now = Date()
-        let connectedPeripherals = peripherals.values.filter { $0.isConnected }
-        for state in connectedPeripherals {
-            let uuid = state.peripheral.identifier
-            // Skip the host connection — never auto-close it
-            if let pid = state.peerID, pid.id.hasPrefix(reservedPeerPrefix), !reservedPeerPrefix.isEmpty {
-                continue
-            }
-            if let lastMsg = lastMessageFromPeripheral[uuid] {
-                let elapsed = now.timeIntervalSince(lastMsg)
-                if elapsed > staleThresholdSeconds {
-                    let short = uuid.uuidString.prefix(8)
-                    let peerStr = state.peerID?.id.prefix(8) ?? "unknown"
-                    hwLog("[HW-DIAG] Patch 72: Closing stale outbound to \(short) (peer=\(peerStr), silent for \(String(format: "%.1f", elapsed))s)")
-                    NSLog("[HW-DIAG] Patch 72: Closing stale outbound to %@ (peer=%@, silent for %.1fs)", String(short), String(peerStr), elapsed)
-                    centralManager?.cancelPeripheralConnection(state.peripheral)
-                    lastMessageFromPeripheral.removeValue(forKey: uuid)
-                    // Patch 72b: Prevent reconnection cycle
-                    if let prefix = state.peerID?.id.prefix(8) {
-                        rejectedPeerPrefixes.insert(String(prefix))
-                    }
-                }
-            }
-            // No entry = just connected, grace period still active (set in didConnect)
-        }
     }
 
     // MARK: Connectivity and peers
@@ -2032,26 +1979,13 @@ extension BLEService: CBCentralManagerDelegate {
         
         let advertisedPeerPrefix = earlyPeerPrefix
 
-        // Patch 71: Only connect to approved peers (if list is populated).
-        // The host (reservedPeerPrefix) always bypasses this check.
+        // Patch 70: Determine if this is the reserved (host) peer for connection budget bypass.
         let isReservedPeer = !reservedPeerPrefix.isEmpty && advertisedPeerPrefix != nil && advertisedPeerPrefix == reservedPeerPrefix
-        if !isReservedPeer && !approvedPeerPrefixes.isEmpty {
-            if let prefix = advertisedPeerPrefix, !approvedPeerPrefixes.contains(prefix) {
-                return
-            } else if advertisedPeerPrefix == nil {
-                return
-            }
-        }
-        // Patch 72b: Skip peers whose previous connection was closed as stale
-        if !isReservedPeer, let prefix = advertisedPeerPrefix, rejectedPeerPrefixes.contains(prefix) {
-            return
-        }
 
         // Budget: limit simultaneous central links (connected + connecting)
         // Patch 41: Reserve one slot for the host peer if reservedPeerPrefix is set.
         // Patch 43: Also recognize reserved peer from advertised local name.
         let currentCentralLinks = peripherals.values.filter { $0.isConnected || $0.isConnecting }.count
-        // isReservedPeer already computed above (Patch 71)
         let effectiveMaxCentralLinks: Int = {
             // Patch 53a: Removed maxCentralLinks > 1 guard so reservation works
             // with a single slot (blocks non-host peers entirely pre-lobby).
@@ -2181,9 +2115,6 @@ extension BLEService: CBCentralManagerDelegate {
     
 func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         let peripheralID = peripheral.identifier.uuidString
-
-        // Patch 72: Initialize last-message timestamp so new connections get a grace period
-        lastMessageFromPeripheral[peripheral.identifier] = Date()
 
         // Update state to connected
         if var state = peripherals[peripheralID] {
@@ -2334,16 +2265,6 @@ extension BLEService {
         connectionCandidates.sort { score($0) > score($1) }
         let candidate = connectionCandidates.removeFirst()
 
-        // Patch 71: Filter out unapproved peers from the retry queue.
-        let candidateIsApproved: Bool = {
-            guard !approvedPeerPrefixes.isEmpty else { return true } // no filter active
-            if let prefix = candidate.hostPeerPrefix, prefix == reservedPeerPrefix { return true } // host always allowed
-            if let prefix = candidate.hostPeerPrefix { return approvedPeerPrefixes.contains(prefix) }
-            return false
-        }()
-        if !candidateIsApproved {
-            return
-        }
         // Patch 43: Reserved-peer-aware budget check.
         // If candidate IS the reserved peer, allow full budget; otherwise use reserved-slot-aware limit.
         let current = peripherals.values.filter { $0.isConnected || $0.isConnecting }.count
@@ -2354,10 +2275,6 @@ extension BLEService {
             guard candidate.name.count == 11, candidate.name.hasPrefix("H") else { return false }
             return String(candidate.name.dropFirst(3)).lowercased() == reservedPeerPrefix
         }()
-        // Patch 72b: Skip rejected peers in retry queue
-        if !candidateIsReserved, let prefix = candidate.hostPeerPrefix, rejectedPeerPrefixes.contains(prefix) {
-            return
-        }
         let budget: Int = {
             // Patch 53a: Removed maxCentralLinks > 1 guard (same as discovery path).
             guard !reservedPeerPrefix.isEmpty else { return maxCentralLinks }
@@ -2532,9 +2449,6 @@ extension BLEService: CBPeripheralDelegate {
             SecureLogger.warning("⚠️ No data in notification", category: .session)
             return
         }
-
-        // Patch 72: Track last message time for stale connection detection
-        lastMessageFromPeripheral[peripheral.identifier] = Date()
 
         bufferNotificationChunk(data, from: peripheral)
     }
