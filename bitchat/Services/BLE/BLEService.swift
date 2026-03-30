@@ -1945,8 +1945,9 @@ extension BLEService: CBCentralManagerDelegate {
     }
     
     private func startScanning() {
-        // Patch 40: Host mode never scans — host only accepts inbound connections.
-        guard !hostMode else { return }
+        // Patch 73: Only scan if outbound connections are allowed.
+        // In star topology: host has maxCentralLinks=9 (scans), player has maxCentralLinks=0 (skips).
+        guard maxCentralLinks > 0 else { return }
 
         guard let central = centralManager,
               central.state == .poweredOn,
