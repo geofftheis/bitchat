@@ -2685,19 +2685,21 @@ extension BLEService: CBPeripheralManagerDelegate {
             category: .session
         )
 
-        // Attempt to recover characteristic from restored services
-        if characteristic == nil {
-            if let service = restoredServices.first(where: { $0.uuid == serviceUUID }),
-               let restoredCharacteristic = service.characteristics?.first(where: { $0.uuid == BLEService.characteristicUUID }) as? CBMutableCharacteristic {
-                characteristic = restoredCharacteristic
-            }
+        // Patch 75: Do NOT restore the characteristic or restart advertising from a
+        // previous session. When the same BLE service UUID is reused across games
+        // (e.g., force-close → relaunch → host with same icon), the restored state
+        // carries stale metadata (locked flag, player count) from the old game.
+        // Restoring the characteristic and advertising here creates a brief window
+        // where stale BLE state is active before peripheralManagerDidUpdateState
+        // (.poweredOn) cleans up and creates a fresh service.
+        // Let the normal .poweredOn flow handle everything from scratch.
+        if !restoredServices.isEmpty {
+            SecureLogger.info("Patch 75: Ignoring \(restoredServices.count) restored services — will create fresh service in .poweredOn", category: .session)
+            peripheral.removeAllServices()
+            peripheral.stopAdvertising()
         }
 
         captureBluetoothStatus(context: "peripheral-restore")
-
-        if peripheral.state == .poweredOn && !peripheral.isAdvertising {
-            peripheral.startAdvertising(buildAdvertisementData())
-        }
     }
     #endif
     
