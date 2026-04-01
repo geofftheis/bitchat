@@ -324,9 +324,14 @@ final class BLEService: NSObject {
         identityManager: SecureIdentityStateManagerProtocol
     ) {
         self.serviceUUID = serviceUUID
-        // Patch 23: derive restoration IDs from serviceUUID
-        self.centralRestorationID = "chat.bitchat.ble.central.\(serviceUUID.uuidString)"
-        self.peripheralRestorationID = "chat.bitchat.ble.peripheral.\(serviceUUID.uuidString)"
+        // Patch 76: Use fixed restoration IDs (not per-UUID) so that creating a
+        // new BLEService with a different icon UUID still reclaims the orphaned
+        // CoreBluetooth state from a force-closed session. Without this, the old
+        // restoration ID is never claimed and CoreBluetooth keeps advertising the
+        // old service UUID, which merges with the new game's host metadata and
+        // causes phantom games to appear in scanners.
+        self.centralRestorationID = "chat.bitchat.ble.central"
+        self.peripheralRestorationID = "chat.bitchat.ble.peripheral"
         self.keychain = keychain
         self.idBridge = idBridge
         noiseService = NoiseEncryptionService(keychain: keychain)
