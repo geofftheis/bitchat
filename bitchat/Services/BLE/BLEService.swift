@@ -2536,13 +2536,34 @@ extension BLEService: CBPeripheralDelegate {
 
         if packet.type == MessageType.announce.rawValue {
             if packet.ttl == messageTTL {
-                if var state = peripherals[peripheralUUID] {
-                    state.peerID = senderID
-                    peripherals[peripheralUUID] = state
-                    hwLog("[HW-DIAG] BLE peerID mapped: peripheral=\(peripheralUUID.prefix(8)) -> peer=\(senderID.id.prefix(8))")
+                let existingPeerID = peripherals[peripheralUUID]?.peerID
+                let existingPeripheralUUID = peerToPeripheralUUID[senderID]
+                let mappingChanged = existingPeerID != senderID || existingPeripheralUUID != peripheralUUID
+
+                if mappingChanged {
+                    // Patch 78: Detect duplicate outbound connection — same peerID
+                    // mapped to a different, still-connected peripheral UUID.
+                    // This happens when iOS rotates a player's BLE address mid-game,
+                    // causing CoreBluetooth to assign a new peripheral UUID to the
+                    // same physical device. Disconnect the orphaned connection.
+                    if let oldUUID = existingPeripheralUUID,
+                       oldUUID != peripheralUUID,
+                       let oldState = peripherals[oldUUID],
+                       oldState.isConnected {
+                        hwLog("[HW-DIAG] BLE duplicate connection detected for peer=\(senderID.id.prefix(8)): old=\(oldUUID.prefix(8)) new=\(peripheralUUID.prefix(8)) — disconnecting old")
+                        NSLog("[HW-DIAG] BLE duplicate connection: peer=%@ old=%@ new=%@ — disconnecting old",
+                              String(senderID.id.prefix(8)), String(oldUUID.prefix(8)), String(peripheralUUID.prefix(8)))
+                        centralManager?.cancelPeripheralConnection(oldState.peripheral)
+                    }
+
+                    if var state = peripherals[peripheralUUID] {
+                        state.peerID = senderID
+                        peripherals[peripheralUUID] = state
+                        hwLog("[HW-DIAG] BLE peerID mapped: peripheral=\(peripheralUUID.prefix(8)) -> peer=\(senderID.id.prefix(8))")
+                    }
+                    peerToPeripheralUUID[senderID] = peripheralUUID
+                    refreshLocalTopology()
                 }
-                peerToPeripheralUUID[senderID] = peripheralUUID
-                refreshLocalTopology()
             }
 
             let msgID = makeMessageID(for: packet)
