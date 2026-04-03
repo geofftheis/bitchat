@@ -2059,9 +2059,9 @@ extension BLEService: CBCentralManagerDelegate {
         }
         }
         
-        // Patch 79b: Reduced from 8s to 3s — 8s was too long for allowDuplicates=false
+        // Patch 79b: Reduced from 8s to 2.5s — 8s was too long for allowDuplicates=false
         // scanning where CoreBluetooth delivers only one discovery event per peripheral.
-        if let lastTimeout = recentConnectTimeouts[peripheralID], Date().timeIntervalSince(lastTimeout) < 3 {
+        if let lastTimeout = recentConnectTimeouts[peripheralID], Date().timeIntervalSince(lastTimeout) < 2.5 {
             return
         }
 
