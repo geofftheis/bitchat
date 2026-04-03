@@ -731,6 +731,7 @@ final class BLEService: NSObject {
             subscribedCentrals.removeAll()
             centralToPeerID.removeAll()
             centralSubscriptionRateLimits.removeAll()
+            connectionCandidates.removeAll() // Patch 82: Prevent stale candidates surviving across sessions
         }
         meshTopology.reset()
     }
@@ -2200,6 +2201,10 @@ func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeriph
 
         // Clean up references
         peripherals.removeValue(forKey: peripheralID)
+        // Patch 82: Remove stale connection candidates for this peripheral so
+        // tryConnectFromQueue() (called below) doesn't immediately reconnect
+        // to a device that just disconnected and may still be initializing.
+        connectionCandidates.removeAll { $0.peripheral.identifier.uuidString == peripheralID }
 
         // Clean up peer mappings
         if let peerID {
