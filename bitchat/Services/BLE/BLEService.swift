@@ -2178,9 +2178,17 @@ func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeriph
             recentConnectTimeouts[peripheralID] = Date()
         }
         
+        // Patch 80: Force CoreBluetooth to fully release the ACL link. When the
+        // remote side disconnects first (e.g., kicked Android player), didDisconnect
+        // fires and cleans up app state, but CoreBluetooth may retain an internal ACL
+        // reference that prevents the device from appearing in scan results. Calling
+        // cancelPeripheralConnection on an already-disconnected peripheral is a no-op
+        // if the link is fully released, but forces cleanup if it's lingering.
+        centralManager?.cancelPeripheralConnection(peripheral)
+
         // Clean up references
         peripherals.removeValue(forKey: peripheralID)
-        
+
         // Clean up peer mappings
         if let peerID {
             peerToPeripheralUUID.removeValue(forKey: peerID)
