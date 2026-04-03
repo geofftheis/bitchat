@@ -2161,6 +2161,12 @@ func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeriph
 
         // Discover services
         peripheral.discoverServices([serviceUUID])
+
+        // Patch 81: Drain the connection candidate queue after a successful connect.
+        // Without this, candidates queued by the global rate limit (when two players
+        // are discovered simultaneously) are stranded — didConnect was the only
+        // connection event that didn't trigger tryConnectFromQueue.
+        bleQueue.async { [weak self] in self?.tryConnectFromQueue() }
     }
     
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
