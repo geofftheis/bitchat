@@ -19,6 +19,12 @@ private func hwLog(_ message: String) {
             let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("diag_logs")
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            // Remove previous ble_ logs — keep only the current session
+            if let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
+                for f in files where f.lastPathComponent.hasPrefix("ble_") {
+                    try? FileManager.default.removeItem(at: f)
+                }
+            }
             let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd_HHmmss"
             let path = dir.appendingPathComponent("ble_\(df.string(from: Date())).txt")
             FileManager.default.createFile(atPath: path.path, contents: nil)
