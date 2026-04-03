@@ -135,6 +135,8 @@ final class BLEService: NSObject {
     private var activeTransfers: [String: ActiveTransferState] = [:]
     // Backoff for peripherals that recently timed out connecting
     private var recentConnectTimeouts: [String: Date] = [:] // Peripheral UUID -> last timeout
+    // Patch 79: Peripherals intentionally disconnected (kick/leave) — suppress reconnect backoff
+    private var intentionalDisconnects: Set<String> = [] // Peripheral UUIDs
     
     // Simple announce throttling
     private var lastAnnounceSent = Date.distantPast
@@ -452,6 +454,7 @@ final class BLEService: NSObject {
         bleQueue.sync {
             pendingWriteBuffers.removeAll()
             recentConnectTimeouts.removeAll()
+            intentionalDisconnects.removeAll()
         }
         recentDisconnectNotifies.removeAll()
 
@@ -644,6 +647,7 @@ final class BLEService: NSObject {
         // Clear connection backoff state so penalties don't carry into the next game
         bleQueue.sync {
             recentConnectTimeouts.removeAll()
+            intentionalDisconnects.removeAll()
         }
         failureCounts.removeAll()
 
@@ -758,6 +762,8 @@ final class BLEService: NSObject {
             let uuid = state.peripheral.identifier.uuidString.prefix(8)
             let preState = state.peripheral.state.rawValue
             hwLog("[HW-DIAG] disconnectPeer: cancelPeripheralConnection(\(uuid)) preState=\(preState)")
+            // Patch 79: Mark as intentional so didDisconnectPeripheral skips backoff
+            intentionalDisconnects.insert(peripheralUUID)
             centralManager?.cancelPeripheralConnection(state.peripheral)
             foundClient = true
 
@@ -2163,7 +2169,11 @@ func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeriph
         NSLog("[HW-DIAG] BLE Disconnect: %@ error=%@ remaining: %d peripherals, %d centrals", peerID?.id ?? peripheralID, error?.localizedDescription ?? "none", remainingPeripherals, remainingCentrals)
 
         // If disconnect carried an error (often timeout), apply short backoff to avoid thrash
-        if error != nil {
+        // Patch 79: Skip backoff for intentional disconnects (kick/leave) so the peer
+        // can reconnect immediately without being blocked by the 8-second timeout window.
+        if intentionalDisconnects.remove(peripheralID) != nil {
+            recentConnectTimeouts.removeValue(forKey: peripheralID)
+        } else if error != nil {
             recentConnectTimeouts[peripheralID] = Date()
         }
         
