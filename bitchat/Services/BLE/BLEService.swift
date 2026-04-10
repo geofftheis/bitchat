@@ -796,6 +796,18 @@ final class BLEService: NSObject {
             }
         }
 
+        // Patch 87: Aggressively clean up all BLE state for this peripheral
+        // after intentional disconnect. Without this, the peripherals[] entry
+        // can retain isConnected=true if a phantom ACL briefly reconnects
+        // (triggers didConnect), blocking didDiscover from reconnecting to
+        // the same peripheral UUID when the player tries to rejoin.
+        if let peripheralUUID = peerToPeripheralUUID[pid] {
+            peripherals.removeValue(forKey: peripheralUUID)
+            recentConnectTimeouts.removeValue(forKey: peripheralUUID)
+            connectionCandidates.removeAll { $0.peripheral.identifier.uuidString == peripheralUUID }
+        }
+        peerToPeripheralUUID.removeValue(forKey: pid)
+
         hwLog("[HW-DIAG] disconnectPeer(\(peerId.prefix(8))) EXIT — foundServer=\(foundServer) foundClient=\(foundClient)")
         NSLog("[HW-DIAG] disconnectPeer(%@) EXIT — foundServer=%d foundClient=%d", String(peerId.prefix(8)), foundServer ? 1 : 0, foundClient ? 1 : 0)
     }
