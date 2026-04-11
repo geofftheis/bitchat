@@ -2147,6 +2147,19 @@ extension BLEService: CBCentralManagerDelegate {
 func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         let peripheralID = peripheral.identifier.uuidString
 
+        // Patch 87b: Reject phantom ACL reconnects after intentional disconnect.
+        // On Pixel 9 Pro (Tensor G4), a phantom ACL reconnects ~131ms after
+        // disconnectPeer() completes. Without this guard, didConnect creates
+        // a peripherals[] entry with isConnected=true that blocks all future
+        // didDiscover attempts for this peripheral UUID.
+        if intentionalDisconnects.contains(peripheralID) {
+            SecureLogger.debug("🚫 Rejecting phantom reconnect for intentionally disconnected peripheral \(peripheralID.prefix(8))…", category: .session)
+            hwLog("[HW-DIAG] BLE Rejected phantom reconnect: \(peripheralID.prefix(8))")
+            NSLog("[HW-DIAG] BLE Rejected phantom reconnect: %@", String(peripheralID.prefix(8)))
+            central.cancelPeripheralConnection(peripheral)
+            return
+        }
+
         // Update state to connected
         if var state = peripherals[peripheralID] {
             state.isConnecting = false
@@ -2197,7 +2210,10 @@ func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeriph
         // If disconnect carried an error (often timeout), apply short backoff to avoid thrash
         // Patch 79: Skip backoff for intentional disconnects (kick/leave) so the peer
         // can reconnect immediately without being blocked by the 8-second timeout window.
-        if intentionalDisconnects.remove(peripheralID) != nil {
+        // Patch 87b: Use contains instead of remove — keep the entry alive so
+        // didConnect can reject phantom ACL reconnects that fire after the
+        // first disconnect. The set is cleared in stopServices() on teardown.
+        if intentionalDisconnects.contains(peripheralID) {
             recentConnectTimeouts.removeValue(forKey: peripheralID)
         } else if error != nil {
             recentConnectTimeouts[peripheralID] = Date()
