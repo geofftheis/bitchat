@@ -141,8 +141,9 @@ final class BLEService: NSObject {
     private var activeTransfers: [String: ActiveTransferState] = [:]
     // Backoff for peripherals that recently timed out connecting
     private var recentConnectTimeouts: [String: Date] = [:] // Peripheral UUID -> last timeout
-    // Patch 79: Peripherals intentionally disconnected (kick/leave) — suppress reconnect backoff
-    private var intentionalDisconnects: Set<String> = [] // Peripheral UUIDs
+    // Patch 79 + 87b: Peripherals intentionally disconnected (kick/leave).
+    // Timestamp-based: reject phantom ACL reconnects within 6s cooldown window.
+    private var intentionalDisconnects: [String: Date] = [:] // Peripheral UUID -> disconnect time
     
     // Simple announce throttling
     private var lastAnnounceSent = Date.distantPast
@@ -770,7 +771,7 @@ final class BLEService: NSObject {
             let preState = state.peripheral.state.rawValue
             hwLog("[HW-DIAG] disconnectPeer: cancelPeripheralConnection(\(uuid)) preState=\(preState)")
             // Patch 79: Mark as intentional so didDisconnectPeripheral skips backoff
-            intentionalDisconnects.insert(peripheralUUID)
+            intentionalDisconnects[peripheralUUID] = Date()
             centralManager?.cancelPeripheralConnection(state.peripheral)
             foundClient = true
 
@@ -2147,19 +2148,21 @@ extension BLEService: CBCentralManagerDelegate {
 func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         let peripheralID = peripheral.identifier.uuidString
 
-        // Patch 87b: Reject phantom ACL reconnects after intentional disconnect.
-        // On Pixel 9 Pro (Tensor G4), a phantom ACL reconnects ~131ms after
-        // disconnectPeer() completes. Without this guard, didConnect creates
-        // a peripherals[] entry with isConnected=true that blocks all future
-        // didDiscover attempts for this peripheral UUID.
-        if intentionalDisconnects.contains(peripheralID) {
-            SecureLogger.debug("🚫 Rejecting phantom reconnect for intentionally disconnected peripheral \(peripheralID.prefix(8))…", category: .session)
+        // Patch 87b: Reject phantom ACL reconnects within 6s cooldown after
+        // intentional disconnect. On Pixel 9 Pro (Tensor G4), phantom ACLs
+        // reconnect multiple times (observed at ~131ms and ~560ms). Any
+        // didConnect within the cooldown window is guaranteed to be a phantom,
+        // not a legitimate rejoin (which requires navigating the UI first).
+        if let disconnectTime = intentionalDisconnects[peripheralID],
+           Date().timeIntervalSince(disconnectTime) < 6.0 {
+            SecureLogger.debug("🚫 Rejecting phantom reconnect for intentionally disconnected peripheral \(peripheralID.prefix(8))… (\(String(format: "%.1f", Date().timeIntervalSince(disconnectTime)))s ago)", category: .session)
             hwLog("[HW-DIAG] BLE Rejected phantom reconnect: \(peripheralID.prefix(8))")
             NSLog("[HW-DIAG] BLE Rejected phantom reconnect: %@", String(peripheralID.prefix(8)))
             central.cancelPeripheralConnection(peripheral)
-            intentionalDisconnects.remove(peripheralID) // Consume — allow future legitimate rejoins
             return
         }
+        // Clear expired entry if present
+        intentionalDisconnects.removeValue(forKey: peripheralID)
 
         // Update state to connected
         if var state = peripherals[peripheralID] {
@@ -2211,10 +2214,10 @@ func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeriph
         // If disconnect carried an error (often timeout), apply short backoff to avoid thrash
         // Patch 79: Skip backoff for intentional disconnects (kick/leave) so the peer
         // can reconnect immediately without being blocked by the 8-second timeout window.
-        // Patch 87b: Use contains instead of remove — keep the entry alive so
-        // didConnect can reject phantom ACL reconnects that fire after the
-        // first disconnect. The set is cleared in stopServices() on teardown.
-        if intentionalDisconnects.contains(peripheralID) {
+        // Patch 87b: Check without removing — keep the entry alive so didConnect
+        // can reject phantom ACL reconnects during the 6s cooldown window.
+        // The dictionary is cleared in stopServices() on teardown.
+        if intentionalDisconnects[peripheralID] != nil {
             recentConnectTimeouts.removeValue(forKey: peripheralID)
         } else if error != nil {
             recentConnectTimeouts[peripheralID] = Date()
