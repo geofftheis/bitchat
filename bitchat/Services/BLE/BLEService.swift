@@ -2157,6 +2157,7 @@ func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeriph
             hwLog("[HW-DIAG] BLE Rejected phantom reconnect: \(peripheralID.prefix(8))")
             NSLog("[HW-DIAG] BLE Rejected phantom reconnect: %@", String(peripheralID.prefix(8)))
             central.cancelPeripheralConnection(peripheral)
+            intentionalDisconnects.remove(peripheralID) // Consume — allow future legitimate rejoins
             return
         }
 
