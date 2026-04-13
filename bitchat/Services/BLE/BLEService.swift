@@ -2154,7 +2154,7 @@ func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeriph
         // didConnect within the cooldown window is guaranteed to be a phantom,
         // not a legitimate rejoin (which requires navigating the UI first).
         if let disconnectTime = intentionalDisconnects[peripheralID],
-           Date().timeIntervalSince(disconnectTime) < 9.0 {
+           Date().timeIntervalSince(disconnectTime) < 60.0 {
             SecureLogger.debug("🚫 Rejecting phantom reconnect for intentionally disconnected peripheral \(peripheralID.prefix(8))… (\(String(format: "%.1f", Date().timeIntervalSince(disconnectTime)))s ago)", category: .session)
             hwLog("[HW-DIAG] BLE Rejected phantom reconnect: \(peripheralID.prefix(8))")
             NSLog("[HW-DIAG] BLE Rejected phantom reconnect: %@", String(peripheralID.prefix(8)))
