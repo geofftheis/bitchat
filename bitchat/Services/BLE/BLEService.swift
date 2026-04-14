@@ -90,7 +90,10 @@ final class BLEService: NSObject {
     }
     private var peripherals: [String: PeripheralState] = [:]  // UUID -> PeripheralState
     private var peerToPeripheralUUID: [PeerID: String] = [:]  // PeerID -> Peripheral UUID
-    
+    // Patch 91: Persistent peer-to-peripheral map. Survives didDisconnectPeripheral
+    // cleanup so disconnectPeer can always find the peripheral UUID during kick.
+    private var knownPeerPeripherals: [PeerID: String] = [:]
+
     // 2. BLE Centrals (when acting as peripheral)
     private var subscribedCentrals: [CBCentral] = []
     private var centralToPeerID: [String: PeerID] = [:]  // Central UUID -> Peer ID mapping
@@ -729,6 +732,7 @@ final class BLEService: NSObject {
         bleQueue.sync {
             peripherals.removeAll()
             peerToPeripheralUUID.removeAll()
+            knownPeerPeripherals.removeAll()
             subscribedCentrals.removeAll()
             centralToPeerID.removeAll()
             centralSubscriptionRateLimits.removeAll()
@@ -765,7 +769,8 @@ final class BLEService: NSObject {
         // Client-side (outbound): cancel our connection to their peripheral and poll
         // for ACL teardown. cancelPeripheralConnection is async — without polling, the
         // ACL link lingers and blocks connection slots for rejoining.
-        if let peripheralUUID = peerToPeripheralUUID[pid],
+        // Patch 91: Fall back to persistent map if volatile map was cleared by LEAVE race
+        if let peripheralUUID = peerToPeripheralUUID[pid] ?? knownPeerPeripherals[pid],
            let state = peripherals[peripheralUUID] {
             let uuid = state.peripheral.identifier.uuidString.prefix(8)
             let preState = state.peripheral.state.rawValue
@@ -1891,6 +1896,7 @@ extension BLEService: CBCentralManagerDelegate {
             }
             peripherals.removeAll()
             peerToPeripheralUUID.removeAll()
+            knownPeerPeripherals.removeAll()
             // Notify UI of disconnections
             for peerID in peerIDs {
                 notifyUI { [weak self] in
@@ -1904,6 +1910,7 @@ extension BLEService: CBCentralManagerDelegate {
             central.stopScan()
             peripherals.removeAll()
             peerToPeripheralUUID.removeAll()
+            knownPeerPeripherals.removeAll()
 
         case .unsupported:
             // Device doesn't support BLE
@@ -2630,6 +2637,7 @@ extension BLEService: CBPeripheralDelegate {
                         hwLog("[HW-DIAG] BLE peerID mapped: peripheral=\(peripheralUUID.prefix(8)) -> peer=\(senderID.id.prefix(8))")
                     }
                     peerToPeripheralUUID[senderID] = peripheralUUID
+                    knownPeerPeripherals[senderID] = peripheralUUID // Patch 91
                     refreshLocalTopology()
                 }
             }
