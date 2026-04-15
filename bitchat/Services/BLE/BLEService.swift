@@ -2155,21 +2155,19 @@ extension BLEService: CBCentralManagerDelegate {
 func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         let peripheralID = peripheral.identifier.uuidString
 
-        // Patch 87b: Reject phantom ACL reconnects within 6s cooldown after
-        // intentional disconnect. On Pixel 9 Pro (Tensor G4), phantom ACLs
-        // reconnect multiple times (observed at ~131ms and ~560ms). Any
-        // didConnect within the cooldown window is guaranteed to be a phantom,
-        // not a legitimate rejoin (which requires navigating the UI first).
-        if let disconnectTime = intentionalDisconnects[peripheralID],
-           Date().timeIntervalSince(disconnectTime) < 60.0 {
+        // Patch 87b: Reject phantom ACL reconnects for intentionally disconnected
+        // peripherals. On Pixel 9 Pro (Tensor G4), phantom ACLs can persist for
+        // 2+ minutes. No time limit — the entry stays until transport teardown.
+        // Returning players always have a new peer ID and get a fresh peripheral
+        // UUID once the phantom ACL finally expires, so this never blocks
+        // legitimate rejoins.
+        if intentionalDisconnects[peripheralID] != nil {
             SecureLogger.debug("🚫 Rejecting phantom reconnect for intentionally disconnected peripheral \(peripheralID.prefix(8))… (\(String(format: "%.1f", Date().timeIntervalSince(disconnectTime)))s ago)", category: .session)
             hwLog("[HW-DIAG] BLE Rejected phantom reconnect: \(peripheralID.prefix(8))")
             NSLog("[HW-DIAG] BLE Rejected phantom reconnect: %@", String(peripheralID.prefix(8)))
             central.cancelPeripheralConnection(peripheral)
             return
         }
-        // Clear expired entry if present
-        intentionalDisconnects.removeValue(forKey: peripheralID)
 
         // Update state to connected
         if var state = peripherals[peripheralID] {
