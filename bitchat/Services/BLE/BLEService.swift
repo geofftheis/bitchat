@@ -2162,7 +2162,7 @@ func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeriph
         // UUID once the phantom ACL finally expires, so this never blocks
         // legitimate rejoins.
         if intentionalDisconnects[peripheralID] != nil {
-            SecureLogger.debug("🚫 Rejecting phantom reconnect for intentionally disconnected peripheral \(peripheralID.prefix(8))… (\(String(format: "%.1f", Date().timeIntervalSince(disconnectTime)))s ago)", category: .session)
+            SecureLogger.debug("🚫 Rejecting phantom reconnect for intentionally disconnected peripheral \(peripheralID.prefix(8))…", category: .session)
             hwLog("[HW-DIAG] BLE Rejected phantom reconnect: \(peripheralID.prefix(8))")
             NSLog("[HW-DIAG] BLE Rejected phantom reconnect: %@", String(peripheralID.prefix(8)))
             central.cancelPeripheralConnection(peripheral)
