@@ -2001,8 +2001,16 @@ extension BLEService: CBCentralManagerDelegate {
             return nil
         }()
 
+        // Recognize a previously-seen game peer reconnecting after BLE address rotation.
+        // knownPeerPeripherals persists through didDisconnectPeripheral (Patch 91), so the
+        // entry survives the rotation gap. Bypass RSSI queue, budget, and rate limiter for
+        // these peers — they are active game participants, not speculative new connections.
+        let isKnownPlayer = earlyPeerPrefix.map { prefix in
+            knownPeerPeripherals.keys.contains { $0.id.hasPrefix(prefix) }
+        } ?? false
+
         // Skip immediate connect if signal too weak for current conditions; enqueue instead
-        if rssiValue <= dynamicRSSIThreshold {
+        if rssiValue <= dynamicRSSIThreshold && !isKnownPlayer {
             connectionCandidates.append(ConnectionCandidate(peripheral: peripheral, rssi: rssiValue, name: String(advertisedName), isConnectable: isConnectable, discoveredAt: Date(), hostPeerPrefix: earlyPeerPrefix))
             // Keep list tidy
             connectionCandidates.sort { (a, b) in
@@ -2041,7 +2049,7 @@ extension BLEService: CBCentralManagerDelegate {
         // ACLs from other players (which can't be force-closed on iOS) must never block
         // the host connection.
         let totalConnections = currentCentralLinks + subscribedCentrals.count
-        if currentCentralLinks >= effectiveMaxCentralLinks || (!isReservedPeer && totalConnections >= maxTotalConnections) {
+        if !isKnownPlayer && (currentCentralLinks >= effectiveMaxCentralLinks || (!isReservedPeer && totalConnections >= maxTotalConnections)) {
             // Enqueue as candidate; we'll attempt later as slots open
             connectionCandidates.append(ConnectionCandidate(peripheral: peripheral, rssi: rssiValue, name: String(advertisedName), isConnectable: isConnectable, discoveredAt: Date(), hostPeerPrefix: advertisedPeerPrefix))
             // Keep candidate list tidy: prefer stronger RSSI, then recency; cap list
@@ -2057,7 +2065,7 @@ extension BLEService: CBCentralManagerDelegate {
 
         // Rate limit global connect attempts
         let sinceLast = Date().timeIntervalSince(lastGlobalConnectAttempt)
-        if sinceLast < connectRateLimitInterval {
+        if sinceLast < connectRateLimitInterval && !isKnownPlayer {
             connectionCandidates.append(ConnectionCandidate(peripheral: peripheral, rssi: rssiValue, name: String(advertisedName), isConnectable: isConnectable, discoveredAt: Date(), hostPeerPrefix: advertisedPeerPrefix))
             connectionCandidates.sort { (a, b) in
                 if a.rssi != b.rssi { return a.rssi > b.rssi }
