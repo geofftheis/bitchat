@@ -2266,12 +2266,20 @@ func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeriph
         }
 
         
-        // Restart scanning with allow duplicates for faster rediscovery
+        // Restart scanning to pick up the disconnected peer's new advertisement.
+        // Skip the restart delay if this was an unexpected disconnect of a known game
+        // player (e.g. Samsung BLE address rotation) — every millisecond of scan gap
+        // is a window where their new RPA advertisement could be missed.
         if centralManager?.state == .poweredOn {
-            // Stop and restart scanning to ensure we get fresh discovery events
             centralManager?.stopScan()
-            bleQueue.asyncAfter(deadline: .now() + TransportConfig.bleRestartScanDelaySeconds) { [weak self] in
-                self?.startScanning()
+            let isUnexpectedPlayerDrop = peerID.map { knownPeerPeripherals[$0] != nil } ?? false
+                && intentionalDisconnects[peripheralID] == nil
+            if isUnexpectedPlayerDrop {
+                startScanning()
+            } else {
+                bleQueue.asyncAfter(deadline: .now() + TransportConfig.bleRestartScanDelaySeconds) { [weak self] in
+                    self?.startScanning()
+                }
             }
         }
         // Attempt to fill freed slot from queue
